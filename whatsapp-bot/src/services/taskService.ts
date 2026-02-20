@@ -162,12 +162,18 @@ export async function createTask(userId: string, parsed: ParsedTask, categoryId?
 
   if (error) throw error;
 
+  // Only create a reminder if the time is in the future
   if (parsed.reminder_time && task) {
-    await getSupabase().from('reminders').insert({
-      task_id: task.id,
-      user_id: userId,
-      reminder_time: parsed.reminder_time,
-    });
+    const reminderDate = new Date(parsed.reminder_time);
+    if (reminderDate.getTime() > Date.now()) {
+      await getSupabase().from('reminders').insert({
+        task_id: task.id,
+        user_id: userId,
+        reminder_time: parsed.reminder_time,
+      });
+    } else {
+      console.log(`[TASK] Skipping reminder — time is in the past: ${parsed.reminder_time}`);
+    }
   }
 
   return task;

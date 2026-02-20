@@ -60,7 +60,7 @@ async function processAddInBackground(
 
     const t1 = Date.now();
     const parsed = await aiService.parseNaturalLanguage(input, categoryNames);
-    console.log(`[BG] AI parsed "${parsed.title}" (${Date.now() - t1}ms)`);
+    console.log(`[BG] AI parsed "${parsed.title}" due=${parsed.due_date} remind=${parsed.reminder_time} (${Date.now() - t1}ms)`);
 
     // Dedup + category resolution in parallel
     const t2 = Date.now();
@@ -164,10 +164,13 @@ export async function handleMessage(
       // ── ADD / REMIND: fire-and-forget ──────────────────────────
       case 'add':
       case 'remind': {
-        const input =
-          command.type === 'remind'
-            ? `remind me to ${command.text}`
-            : command.text;
+        let input = command.text;
+        if (command.type === 'remind') {
+          // Parser gives us text after "remind "/"reminder " — strip "me to " if present
+          // to avoid "remind me to me to ..." doubling
+          const body = input.replace(/^me to\s+/i, '');
+          input = `remind me to ${body}`;
+        }
 
         // Instant ack — don't make WhatsApp wait
         await sendReply(sock, replyJid, `⏳ Adding...`);

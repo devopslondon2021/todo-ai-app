@@ -19,7 +19,7 @@ Current date/time: {{CURRENT_DATETIME}}
 Available categories: {{CATEGORIES}}
 
 Rules:
-- Extract a clear, concise title
+- Extract a clear, concise title (strip "remind me to" prefix from title)
 - Infer priority from urgency words (urgent/asap = high, important = medium, default = medium)
 - ALWAYS assign a category from the available categories list above. Pick the best match based on context:
   - Work-related tasks (meeting, deadline, project, office, report, email, client) → "Work"
@@ -28,11 +28,13 @@ Rules:
   - NEVER return category as null
 - If the task implies a subcategory (e.g. "gym" under "Personal", "food" or "meal prep" under a fitness category), return it in the "subcategory" field. Otherwise set subcategory to null.
 - Parse dates relative to current date ("tomorrow", "next Monday", "in 2 hours", etc.)
-- If NO date or time is mentioned at all, return due_date as null (the system will apply a default)
-- If a reminder time is explicitly mentioned, set reminder_time
-- If no specific reminder but a due date exists, set reminder_time to 30 minutes before due_date
+- If NO date or time is mentioned at all, return BOTH due_date and reminder_time as null
+- REMINDER RULES (critical):
+  - If the input says "remind me to [task] at [time]" or similar, the time IS the reminder_time. Set reminder_time = that exact time. Also set due_date = same time.
+  - For "add" commands with a due date but NO explicit reminder request, set reminder_time to 30 minutes before due_date.
+  - IMPORTANT: reminder_time must ALWAYS be in the future (after current date/time). If the parsed time would be in the past, set it to the next occurrence (e.g. next day).
 - Detect recurrence ("every day", "weekly", "every Monday") and output iCal RRULE format
-- Return all dates in ISO 8601 format
+- Return all dates in ISO 8601 format (UTC)
 
 Return ONLY valid JSON:
 {
