@@ -31,25 +31,24 @@ export function formatTaskList(tasks: Task[]): string {
 }
 
 export function formatHelp(): string {
-  return `🤖 *Todo AI Bot - Commands*
-
-Just type naturally! Examples:
-• _Buy groceries tomorrow at 5pm_
-• _Remind me to call mom on Friday_
-• _Submit report by end of day - high priority_
+  return `*Todo AI Bot*
 
 *Commands:*
-• *add* [task] — Add a new task
-• *list* — Show all pending tasks
+• *add* [task] — Add a task (AI parses details)
+• *remind* [text] — Add a task with reminder
+• *list* — Show pending tasks
 • *list today* — Tasks due today
-• *list work* — Tasks in work category
-• *list completed* — Completed tasks
-• *done* [number] — Mark task as complete
+• *list* [category] — Filter by category
+• *done* [number] — Complete a task
 • *delete* [number] — Delete a task
 • *categories* — View your categories
 • *help* — Show this message
 
-_Tip: You can also just describe what you need in plain English!_`;
+*Examples:*
+• _add buy groceries tomorrow 5pm_
+• _add submit report - high priority_
+• _remind call doctor Friday at 3pm_
+• _add brainstorm ideas_ (no date = brain dump)`;
 }
 
 /** Format categories as an indented tree */

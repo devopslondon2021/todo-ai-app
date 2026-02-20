@@ -163,7 +163,6 @@ export async function handleMessage(
 
       // ── ADD / REMIND: fire-and-forget ──────────────────────────
       case 'add':
-      case 'natural':
       case 'remind': {
         const input =
           command.type === 'remind'
@@ -215,6 +214,13 @@ export async function handleMessage(
       case 'categories': {
         const tree = await taskService.getCategoryTree(user.id);
         await sendReply(sock, replyJid, tree.length === 0 ? '📂 No categories.' : formatCategoryTree(tree));
+        break;
+      }
+
+      case 'unknown': {
+        await sendReply(sock, replyJid,
+          `I didn't recognize that command.\n\nUse *add* [task] to create a task, or send *help* for all commands.`
+        );
         break;
       }
     }

@@ -6,7 +6,7 @@ export type Command =
   | { type: 'remind'; text: string }
   | { type: 'categories' }
   | { type: 'help' }
-  | { type: 'natural'; text: string };
+  | { type: 'unknown'; text: string };
 
 export function parseCommand(text: string): Command {
   const trimmed = text.trim();
@@ -45,6 +45,5 @@ export function parseCommand(text: string): Command {
     return { type: 'remind', text: trimmed.slice(prefix).trim() };
   }
 
-  // Default: treat as natural language
-  return { type: 'natural', text: trimmed };
+  return { type: 'unknown', text: trimmed };
 }

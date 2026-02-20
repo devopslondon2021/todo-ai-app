@@ -95,8 +95,8 @@ describe('parseCommand', () => {
       expect(parseCommand('done 15')).toEqual({ type: 'done', taskNumber: 15 });
     });
 
-    it('falls through to natural for invalid number', () => {
-      expect(parseCommand('done abc')).toEqual({ type: 'natural', text: 'done abc' });
+    it('falls through to unknown for invalid number', () => {
+      expect(parseCommand('done abc')).toEqual({ type: 'unknown', text: 'done abc' });
     });
 
     it('is case-insensitive', () => {
@@ -115,7 +115,7 @@ describe('parseCommand', () => {
     });
 
     it('falls through for invalid number', () => {
-      expect(parseCommand('delete xyz')).toEqual({ type: 'natural', text: 'delete xyz' });
+      expect(parseCommand('delete xyz')).toEqual({ type: 'unknown', text: 'delete xyz' });
     });
   });
 
@@ -140,58 +140,61 @@ describe('parseCommand', () => {
     });
   });
 
-  // ─── NATURAL LANGUAGE (fallback) ───
-  describe('natural language fallback', () => {
-    it('treats plain sentences as natural', () => {
+  // ─── UNKNOWN (fallback) ───
+  describe('unknown command fallback', () => {
+    it('treats plain sentences as unknown', () => {
       expect(parseCommand('buy groceries tomorrow at 5pm')).toEqual({
-        type: 'natural',
+        type: 'unknown',
         text: 'buy groceries tomorrow at 5pm',
       });
     });
 
-    it('treats unknown commands as natural', () => {
+    it('treats unrecognized commands as unknown', () => {
       expect(parseCommand('update task 1')).toEqual({
-        type: 'natural',
+        type: 'unknown',
         text: 'update task 1',
       });
     });
 
-    it('treats empty-ish add as natural (just "add")', () => {
-      // "add" without content — startsWith("add ") won't match
+    it('treats empty-ish add as unknown (just "add")', () => {
       expect(parseCommand('add')).toEqual({
-        type: 'natural',
+        type: 'unknown',
         text: 'add',
       });
     });
 
+    it('treats random words as unknown (not task creation)', () => {
+      expect(parseCommand('lost')).toEqual({ type: 'unknown', text: 'lost' });
+      expect(parseCommand('hello')).toEqual({ type: 'unknown', text: 'hello' });
+    });
+
     it('preserves full input text', () => {
       const input = 'Submit the quarterly report to finance team by next Friday - high priority';
-      expect(parseCommand(input)).toEqual({ type: 'natural', text: input });
+      expect(parseCommand(input)).toEqual({ type: 'unknown', text: input });
     });
   });
 
   // ─── EDGE CASES ───
   describe('edge cases', () => {
-    it('handles "done" without a number as natural', () => {
-      expect(parseCommand('done')).toEqual({ type: 'natural', text: 'done' });
+    it('handles "done" without a number as unknown', () => {
+      expect(parseCommand('done')).toEqual({ type: 'unknown', text: 'done' });
     });
 
-    it('handles "delete" without a number as natural', () => {
-      expect(parseCommand('delete')).toEqual({ type: 'natural', text: 'delete' });
+    it('handles "delete" without a number as unknown', () => {
+      expect(parseCommand('delete')).toEqual({ type: 'unknown', text: 'delete' });
     });
 
-    it('handles "remind " with trailing space as natural', () => {
-      // "remind " after trim() becomes "remind" which doesn't start with "remind "
+    it('handles "remind " with trailing space as unknown', () => {
       const result = parseCommand('remind ');
-      expect(result).toEqual({ type: 'natural', text: 'remind' });
+      expect(result).toEqual({ type: 'unknown', text: 'remind' });
     });
 
     it('does NOT match "added something" as add', () => {
-      expect(parseCommand('added something')).toEqual({ type: 'natural', text: 'added something' });
+      expect(parseCommand('added something')).toEqual({ type: 'unknown', text: 'added something' });
     });
 
     it('does NOT match "listing" as list', () => {
-      expect(parseCommand('listing')).toEqual({ type: 'natural', text: 'listing' });
+      expect(parseCommand('listing')).toEqual({ type: 'unknown', text: 'listing' });
     });
 
     it('handles "done 0"', () => {

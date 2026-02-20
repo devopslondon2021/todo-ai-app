@@ -105,8 +105,8 @@ describe('handleMessage', () => {
     });
   });
 
-  // ─── ADD / NATURAL LANGUAGE ───
-  describe('task creation (add/natural)', () => {
+  // ─── ADD ───
+  describe('task creation (add/remind)', () => {
     const PARSED = {
       title: 'Buy milk',
       description: null,
@@ -134,15 +134,13 @@ describe('handleMessage', () => {
       );
     });
 
-    it('creates a task from natural language', async () => {
-      vi.mocked(aiService.parseNaturalLanguage).mockResolvedValue(PARSED);
-      vi.mocked(taskService.createTaskFromParsed).mockResolvedValue(MOCK_TASK);
-
+    it('rejects random text that is not a command', async () => {
       const sock = mockSocket();
       await handleMessage(sock, mockMsg('buy groceries tomorrow at 5pm'));
 
-      expect(aiService.parseNaturalLanguage).toHaveBeenCalledWith('buy groceries tomorrow at 5pm');
-      expect(taskService.createTaskFromParsed).toHaveBeenCalled();
+      expect(aiService.parseNaturalLanguage).not.toHaveBeenCalled();
+      const reply = sock.sendMessage.mock.calls[0][1].text;
+      expect(reply).toContain("didn't recognize");
     });
 
     it('prefixes "remind me to" for remind command', async () => {
