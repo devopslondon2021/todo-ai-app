@@ -33,16 +33,24 @@ export function formatTaskList(tasks: Task[]): string {
 export function formatHelp(): string {
   return `*Todo AI Bot*
 
-*Commands:*
+*Add Tasks:*
 • *add* [task] — Add a task (AI parses details)
 • *remind* [text] — Add a task with reminder
+
+*View Tasks:*
 • *list* — Show pending tasks
 • *list today* — Tasks due today
-• *list* [category] — Filter by category
+• *list completed* — Completed tasks
+• *list* [category] — Filter by category (e.g. list work)
+
+*Manage Tasks:*
 • *done* [number] — Complete a task
 • *delete* [number] — Delete a task
-• *categories* — View your categories
-• *help* — Show this message
+• *remove* [number] — Same as delete
+
+*Other:*
+• *categories* (or *cats*) — View your categories
+• *help* (or */help*) — Show this message
 
 *Examples:*
 • _add buy groceries tomorrow 5pm_
