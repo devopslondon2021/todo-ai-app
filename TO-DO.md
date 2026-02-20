@@ -1,0 +1,2 @@
+- As per Claude dont use MCP instead build Skill and give a script to be used so that context will not be filled. 
+- 

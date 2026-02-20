@@ -1,0 +1,22 @@
+{
+  "name": "todo-ai-app",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend",
+    "whatsapp-bot"
+  ],
+  "scripts": {
+    "dev": "concurrently -n fe,be,wa -c cyan,green,yellow \"npm run dev -w frontend\" \"npm run dev -w backend\" \"npm run dev -w whatsapp-bot\"",
+    "dev:frontend": "npm run dev -w frontend",
+    "dev:backend": "npm run dev -w backend",
+    "dev:whatsapp": "npm run dev -w whatsapp-bot",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "test": "npm test -w whatsapp-bot",
+    "test:whatsapp": "npm test -w whatsapp-bot"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "playwright": "^1.58.2"
+  }
+}

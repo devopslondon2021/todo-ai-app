@@ -1,0 +1,28 @@
+{
+  "name": "todo-ai-whatsapp-bot",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch --ignore ./auth_info_baileys src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "baileys": "7.0.0-rc.9",
+    "dotenv": "^16.4.0",
+    "node-cache": "^5.1.2",
+    "node-cron": "^3.0.3",
+    "openai": "^4.77.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  }
+}

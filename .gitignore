@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.local
+whatsapp-bot/auth_info_baileys/
+frontend/.next/
+backend/dist/
+whatsapp-bot/dist/
+*.log
+.DS_Store
+.claude/
+.agents/
+.next/

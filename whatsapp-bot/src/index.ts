@@ -1,0 +1,27 @@
+import { env } from './config/env.js';
+
+async function main() {
+  // Check required env vars before starting
+  const missing: string[] = [];
+  if (!env.SUPABASE_URL) missing.push('SUPABASE_URL');
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) missing.push('SUPABASE_SERVICE_ROLE_KEY');
+
+  if (missing.length > 0) {
+    console.warn(`⚠️  WhatsApp Bot: Missing env vars: ${missing.join(', ')}`);
+    console.warn('   Set these in .env and restart to enable the WhatsApp bot.\n');
+    return;
+  }
+
+  const { connectWhatsApp } = await import('./connection/whatsapp.js');
+  const { handleMessage } = await import('./handlers/messageHandler.js');
+  const { startReminderScheduler } = await import('./scheduler/reminderCron.js');
+
+  console.log('🚀 Starting Todo AI WhatsApp Bot...\n');
+  await connectWhatsApp(handleMessage);
+  startReminderScheduler();
+}
+
+main().catch((err) => {
+  console.error('Fatal error:', err);
+  process.exit(1);
+});
