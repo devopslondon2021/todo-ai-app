@@ -234,6 +234,29 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
                   <li>Say <strong className="text-primary">&quot;Hey Siri, Add Task&quot;</strong> to test!</li>
                 </ol>
               </div>
+
+              {/* Today's Tasks Shortcut */}
+              <div className="rounded-[var(--radius-lg)] border border-border/40 bg-surface/50 p-3.5 mt-3">
+                <div className="flex items-center gap-1.5 mb-2.5">
+                  <ExternalLink size={13} className="text-primary" aria-hidden="true" />
+                  <span className="text-[11px] font-semibold text-text">Today&apos;s Tasks Shortcut</span>
+                </div>
+                <ol className="space-y-2 text-[11px] text-muted leading-relaxed list-decimal list-inside">
+                  <li>Open <strong className="text-text">Shortcuts</strong> &rarr; tap <strong className="text-text">+</strong></li>
+                  <li>Add action: <strong className="text-text">&quot;Get Contents of URL&quot;</strong></li>
+                  <li>
+                    URL: <code className="text-primary bg-bg/50 px-1.5 py-0.5 rounded-md">{BACKEND_URL}/api/tasks/siri/today</code>
+                  </li>
+                  <li>Method: <strong className="text-text">GET</strong></li>
+                  <li>
+                    Headers: <code className="text-primary bg-bg/50 px-1.5 py-0.5 rounded-md">Authorization</code> = <code className="text-primary bg-bg/50 px-1.5 py-0.5 rounded-md">Bearer {apiKey ? (keyVisible ? apiKey : "your_api_key") : "your_api_key"}</code>
+                  </li>
+                  <li>Add action: <strong className="text-text">&quot;Get Dictionary Value&quot;</strong> &rarr; key <code className="text-primary bg-bg/50 px-1.5 py-0.5 rounded-md">data.summary</code></li>
+                  <li>Add action: <strong className="text-text">&quot;Speak Text&quot;</strong> &rarr; select the dictionary value</li>
+                  <li>Rename to <strong className="text-text">&quot;Today&apos;s Tasks&quot;</strong></li>
+                  <li>Say <strong className="text-primary">&quot;Hey Siri, Today&apos;s Tasks&quot;</strong> to test!</li>
+                </ol>
+              </div>
             </>
           )}
         </div>

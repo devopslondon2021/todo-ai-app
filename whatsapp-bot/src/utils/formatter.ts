@@ -7,6 +7,14 @@ interface Task {
   categories?: { name: string } | null;
 }
 
+interface VideoTask {
+  id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  created_at: string;
+}
+
 interface CategoryNode {
   id: string;
   name: string;
@@ -30,33 +38,113 @@ export function formatTaskList(tasks: Task[]): string {
   return `📋 *Your Tasks*\n\n${lines.join('\n')}\n\n_Reply "done [number]" to complete a task_`;
 }
 
-export function formatHelp(): string {
-  return `*Todo AI Bot*
+export function formatQueryResult(tasks: Task[], search: string, timeFilter?: string): string {
+  const timeLabel = timeFilter ? ` for ${timeFilter}` : '';
+
+  if (tasks.length === 0) {
+    return `No tasks matching "${search}"${timeLabel} found.`;
+  }
+
+  const lines = tasks.map((t, i) => {
+    const priority = t.priority === 'high' ? '🔴' : t.priority === 'medium' ? '🟡' : '🔵';
+    const cat = t.categories?.name ? ` [${t.categories.name}]` : '';
+    const due = t.due_date ? ` 📅 ${formatDateTime(t.due_date)}` : '';
+    return `${i + 1}. ${priority} *${t.title}*${cat}${due}`;
+  });
+
+  return `Found ${tasks.length} task${tasks.length === 1 ? '' : 's'} matching "${search}"${timeLabel}:\n\n${lines.join('\n')}`;
+}
+
+export function formatVideoList(videos: VideoTask[]): string {
+  if (videos.length === 0) {
+    return '🎬 No saved videos. Paste a YouTube or Instagram link to save one!';
+  }
+
+  const igVideos = videos.filter(v => v.title.startsWith('[IG]'));
+  const ytVideos = videos.filter(v => v.title.startsWith('[YT]'));
+  const otherVideos = videos.filter(v => !v.title.startsWith('[IG]') && !v.title.startsWith('[YT]'));
+
+  const sections: string[] = [];
+  let idx = 1;
+
+  if (igVideos.length > 0) {
+    const lines = igVideos.map(v => {
+      const displayTitle = v.title.replace(/^\[IG\]\s*/, '');
+      const date = formatDate(v.created_at);
+      return `${idx++}. 📷 *${displayTitle}* — ${date}`;
+    });
+    sections.push(`*Instagram*\n${lines.join('\n')}`);
+  }
+
+  if (ytVideos.length > 0) {
+    const lines = ytVideos.map(v => {
+      const displayTitle = v.title.replace(/^\[YT\]\s*/, '');
+      const date = formatDate(v.created_at);
+      return `${idx++}. ▶️ *${displayTitle}* — ${date}`;
+    });
+    sections.push(`*YouTube*\n${lines.join('\n')}`);
+  }
+
+  if (otherVideos.length > 0) {
+    const lines = otherVideos.map(v => {
+      const date = formatDate(v.created_at);
+      return `${idx++}. 🎬 *${v.title}* — ${date}`;
+    });
+    sections.push(lines.join('\n'));
+  }
+
+  return `🎬 *Saved Videos*\n\n${sections.join('\n\n')}\n\n_Reply "videos done [number]" to mark as watched_`;
+}
+
+export function formatHelp(callEscalationEnabled = false): string {
+  let text = `*Todo AI Bot*
 
 *Add Tasks:*
 • *add* [task] — Add a task (AI parses details)
+• *add a task* [task] — Same as above
 • *remind* [text] — Add a task with reminder
+• *set reminder* [text] — Same as above
+• Send a *voice note* to add a task
 
 *View Tasks:*
 • *list* — Show pending tasks
 • *list today* — Tasks due today
 • *list completed* — Completed tasks
 • *list* [category] — Filter by category (e.g. list work)
+• *show my tasks* / *my tasks* — Same as list
 
 *Manage Tasks:*
 • *done* [number] — Complete a task
 • *delete* [number] — Delete a task
 • *remove* [number] — Same as delete
 
+*Videos:*
+• Paste a *YouTube* or *Instagram* link to save it
+• *videos* (or *vids*) — List saved videos
+• *videos done* [number] — Mark a video as watched
+
 *Other:*
+• *summary* — Daily summary (stats + today's tasks + reminders)
 • *categories* (or *cats*) — View your categories
 • *help* (or */help*) — Show this message
+
+*Natural Language:*
+You can also ask questions naturally:
+• _"How many meetings do I have today?"_
+• _"Do I have any tasks for today?"_
+• _"Show my work tasks"_
 
 *Examples:*
 • _add buy groceries tomorrow 5pm_
 • _add submit report - high priority_
 • _remind call doctor Friday at 3pm_
 • _add brainstorm ideas_ (no date = brain dump)`;
+
+  if (callEscalationEnabled) {
+    text += `\n\n\u{1F4DE} _If you don't respond within 5 min, you'll get a phone call reminder_`;
+  }
+
+  return text;
 }
 
 /** Format categories as an indented tree */
@@ -78,6 +166,45 @@ export function formatCategoryTree(tree: CategoryNode[]): string {
   return `📂 *Your Categories*\n\n${lines.join('\n')}`;
 }
 
+export function formatSummary(
+  stats: { total: number; pending: number; in_progress: number; completed: number },
+  todayTasks: Task[],
+  reminders: { id: string; reminder_time: string; tasks: any }[]
+): string {
+  const lines: string[] = ['📊 *Daily Summary*\n'];
+
+  // Stats
+  lines.push(`*Tasks:* ${stats.total} total — ${stats.pending} pending, ${stats.in_progress} in progress, ${stats.completed} completed\n`);
+
+  // Today's tasks
+  if (todayTasks.length === 0) {
+    lines.push('📋 *Due Today:* None');
+  } else {
+    lines.push('📋 *Due Today:*');
+    todayTasks.forEach((t, i) => {
+      const priority = t.priority === 'high' ? '🔴' : t.priority === 'medium' ? '🟡' : '🔵';
+      lines.push(`${i + 1}. ${priority} *${t.title}*`);
+    });
+  }
+
+  // Upcoming reminders
+  if (reminders.length > 0) {
+    lines.push('\n🔔 *Upcoming Reminders:*');
+    reminders.forEach((r) => {
+      // Supabase may return tasks as object or array depending on join
+      const taskRef = Array.isArray(r.tasks) ? r.tasks[0] : r.tasks;
+      const title = taskRef?.title || 'Unknown task';
+      const time = new Date(r.reminder_time).toLocaleString('en-US', {
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+      });
+      lines.push(`• ${title} — ${time}`);
+    });
+  }
+
+  return lines.join('\n');
+}
+
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
   const now = new Date();
@@ -88,4 +215,18 @@ function formatDate(dateStr: string): string {
   if (d.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
 
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function formatDateTime(dateStr: string): string {
+  const d = new Date(dateStr);
+  const datePart = formatDate(dateStr);
+
+  const hours = d.getHours();
+  const minutes = d.getMinutes();
+
+  // If time is midnight (00:00), just show the date
+  if (hours === 0 && minutes === 0) return datePart;
+
+  const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return `${datePart} ${timePart}`;
 }

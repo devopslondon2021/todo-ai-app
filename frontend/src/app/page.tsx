@@ -93,10 +93,33 @@ function Dashboard() {
 
   const allTasks = isDemo ? DEMO_TASKS : liveTasks;
 
-  // Client-side filtering
+  // Identify video-related categories: "Videos" parent + its children (Instagram, YouTube)
+  const videoCategoryIds = useMemo(() => {
+    const ids = new Set<string>();
+    const videoParent = categories.find(c => c.name === 'Videos' && !c.parent_id);
+    if (videoParent) {
+      ids.add(videoParent.id);
+      categories.filter(c => c.parent_id === videoParent.id).forEach(c => ids.add(c.id));
+    }
+    return ids;
+  }, [categories]);
+
+  // Check if user is viewing a video category (parent or subcategory)
+  const isVideoCategory = !!(filters.category_id && videoCategoryIds.has(filters.category_id));
+  const isVideoParent = !!(filters.category_id &&
+    categories.find(c => c.id === filters.category_id && c.name === 'Videos' && !c.parent_id));
+
+  // Client-side filtering — exclude video tasks unless a video category is selected
   const tasks = useMemo(() => {
     return allTasks.filter((t) => {
-      if (filters.category_id && t.category_id !== filters.category_id) return false;
+      // Hide video tasks from all views EXCEPT when a video category is selected
+      if (!isVideoCategory && t.category_id && videoCategoryIds.has(t.category_id)) return false;
+      // When "Videos" parent is selected, show tasks from all subcategories
+      if (isVideoParent) {
+        if (!t.category_id || !videoCategoryIds.has(t.category_id)) return false;
+      } else if (filters.category_id && t.category_id !== filters.category_id) {
+        return false;
+      }
       if (filters.priority && t.priority !== filters.priority) return false;
       if (filters.status && t.status !== filters.status) return false;
       if (filters.search && !t.title.toLowerCase().includes(filters.search.toLowerCase())) return false;
@@ -106,15 +129,18 @@ function Dashboard() {
       }
       return true;
     });
-  }, [allTasks, filters]);
+  }, [allTasks, filters, isVideoCategory, isVideoParent, videoCategoryIds]);
 
-  // Stats always from ALL tasks (unfiltered)
-  const stats: TaskStats = useMemo(() => ({
-    total: allTasks.length,
-    pending: allTasks.filter((t) => t.status === "pending").length,
-    in_progress: allTasks.filter((t) => t.status === "in_progress").length,
-    completed: allTasks.filter((t) => t.status === "completed").length,
-  }), [allTasks]);
+  // Stats exclude video tasks
+  const stats: TaskStats = useMemo(() => {
+    const nonVideo = allTasks.filter(t => !t.category_id || !videoCategoryIds.has(t.category_id));
+    return {
+      total: nonVideo.length,
+      pending: nonVideo.filter((t) => t.status === "pending").length,
+      in_progress: nonVideo.filter((t) => t.status === "in_progress").length,
+      completed: nonVideo.filter((t) => t.status === "completed").length,
+    };
+  }, [allTasks, videoCategoryIds]);
 
   const handleRefetch = useCallback(() => {
     if (!isDemo) refetch();

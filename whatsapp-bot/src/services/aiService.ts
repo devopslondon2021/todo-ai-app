@@ -49,6 +49,62 @@ Return ONLY valid JSON:
   "recurrence_rule": "RRULE string or null"
 }`;
 
+// ─── Intent Classification ──────────────────────────────────────────
+
+export type ClassifiedIntent =
+  | { intent: 'add'; text: string }
+  | { intent: 'remind'; text: string }
+  | { intent: 'query'; search: string; timeFilter?: string }
+  | { intent: 'list'; timeFilter?: string }
+  | { intent: 'summary' }
+  | { intent: 'unknown' };
+
+const CLASSIFY_PROMPT = `Classify the user's intent. Return JSON with one of these structures:
+- {"intent":"add","text":"task description"}
+- {"intent":"remind","text":"what to remind"}
+- {"intent":"query","search":"keyword","timeFilter":"today|this week|etc or omit"}
+- {"intent":"list","timeFilter":"today|this week|etc or omit"}
+- {"intent":"summary"}
+- {"intent":"unknown"}
+
+Rules:
+- "add" = user wants to create a new task
+- "remind" = user wants a reminder
+- "query" = user is asking about specific tasks (e.g. "how many meetings today?"). Use singular search keyword for broader matching (e.g. "meetings" → "meeting")
+- "list" = user wants to see their tasks (e.g. "show my tasks")
+- "summary" = user wants an overview/summary
+- "unknown" = can't determine intent
+Return ONLY valid JSON.`;
+
+export async function classifyIntent(input: string): Promise<ClassifiedIntent> {
+  try {
+    const client = getAIClient();
+    const model = getModelName();
+
+    const response = await client.chat.completions.create({
+      model,
+      messages: [
+        { role: 'system', content: CLASSIFY_PROMPT },
+        { role: 'user', content: input },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0,
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) return { intent: 'unknown' };
+
+    const parsed = JSON.parse(content);
+    if (!parsed.intent) return { intent: 'unknown' };
+    return parsed as ClassifiedIntent;
+  } catch (err) {
+    console.error('[AI] classifyIntent error:', err);
+    return { intent: 'unknown' };
+  }
+}
+
+// ─── Task Parsing ───────────────────────────────────────────────────
+
 export async function parseNaturalLanguage(input: string, categoryNames?: string[]): Promise<ParsedTask> {
   const client = getAIClient();
   const model = getModelName();

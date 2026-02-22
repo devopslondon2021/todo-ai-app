@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { formatTaskList, formatHelp, formatCategoryTree } from '../utils/formatter.js';
+import { formatTaskList, formatHelp, formatCategoryTree, formatSummary, formatQueryResult, formatVideoList } from '../utils/formatter.js';
 
 describe('formatTaskList', () => {
   it('returns empty message when no tasks', () => {
@@ -98,6 +98,65 @@ describe('formatTaskList', () => {
   });
 });
 
+describe('formatQueryResult', () => {
+  it('formats tasks matching a search', () => {
+    const tasks = [
+      { id: '1', title: 'Team meeting', priority: 'high', status: 'pending', due_date: null },
+      { id: '2', title: 'Client meeting', priority: 'medium', status: 'pending', due_date: null },
+    ];
+    const result = formatQueryResult(tasks, 'meeting');
+    expect(result).toContain('Found 2 tasks matching "meeting"');
+    expect(result).toContain('*Team meeting*');
+    expect(result).toContain('*Client meeting*');
+  });
+
+  it('shows singular "task" for one result', () => {
+    const tasks = [
+      { id: '1', title: 'Team meeting', priority: 'high', status: 'pending', due_date: null },
+    ];
+    const result = formatQueryResult(tasks, 'meeting');
+    expect(result).toContain('Found 1 task matching "meeting"');
+  });
+
+  it('shows time filter in header', () => {
+    const tasks = [
+      { id: '1', title: 'Team meeting', priority: 'high', status: 'pending', due_date: null },
+    ];
+    const result = formatQueryResult(tasks, 'meeting', 'today');
+    expect(result).toContain('for today');
+  });
+
+  it('returns empty message when no results', () => {
+    const result = formatQueryResult([], 'meeting');
+    expect(result).toContain('No tasks matching "meeting"');
+  });
+
+  it('returns empty message with time filter', () => {
+    const result = formatQueryResult([], 'meeting', 'today');
+    expect(result).toContain('No tasks matching "meeting" for today');
+  });
+
+  it('shows time alongside date for tasks with a specific time', () => {
+    // 3:00 PM UTC — the formatted time depends on locale but should contain a time portion
+    const tasks = [
+      { id: '1', title: 'Team meeting', priority: 'high', status: 'pending', due_date: '2026-02-21T15:00:00.000Z' },
+    ];
+    const result = formatQueryResult(tasks, 'meeting', 'today');
+    // Should contain a time like "3:00 PM" or locale equivalent (with AM/PM)
+    expect(result).toMatch(/\d{1,2}:\d{2}\s*(AM|PM)/);
+  });
+
+  it('does not show time when due_date is midnight (date-only task)', () => {
+    const tasks = [
+      { id: '1', title: 'All day task', priority: 'low', status: 'pending', due_date: '2026-03-15T00:00:00.000Z' },
+    ];
+    const result = formatQueryResult(tasks, 'task');
+    // Should NOT contain a time portion — only the date
+    const taskLine = result.split('\n').find(l => l.includes('*All day task*'))!;
+    expect(taskLine).not.toMatch(/\d{1,2}:\d{2}\s*(AM|PM)/);
+  });
+});
+
 describe('formatHelp', () => {
   it('returns help text with commands', () => {
     const result = formatHelp();
@@ -112,8 +171,29 @@ describe('formatHelp', () => {
 
   it('includes natural language examples', () => {
     const result = formatHelp();
-    expect(result).toContain('Buy groceries');
-    expect(result).toContain('plain English');
+    expect(result).toContain('buy groceries');
+    expect(result).toContain('call doctor');
+  });
+
+  it('includes summary command', () => {
+    const result = formatHelp();
+    expect(result).toContain('summary');
+  });
+
+  it('includes natural language section', () => {
+    const result = formatHelp();
+    expect(result).toContain('Natural Language');
+    expect(result).toContain('meetings');
+  });
+
+  it('shows call escalation note when enabled', () => {
+    const result = formatHelp(true);
+    expect(result).toContain('phone call reminder');
+  });
+
+  it('hides call escalation note when disabled', () => {
+    const result = formatHelp(false);
+    expect(result).not.toContain('phone call');
   });
 
   it('includes filter examples', () => {
@@ -121,6 +201,13 @@ describe('formatHelp', () => {
     expect(result).toContain('list today');
     expect(result).toContain('list work');
     expect(result).toContain('list completed');
+  });
+
+  it('includes videos section', () => {
+    const result = formatHelp();
+    expect(result).toContain('Videos');
+    expect(result).toContain('videos');
+    expect(result).toContain('videos done');
   });
 });
 
@@ -181,5 +268,103 @@ describe('formatCategoryTree', () => {
     expect(result).toContain('Work');
     expect(result).toContain('Projects');
     expect(result).toContain('Todo AI');
+  });
+});
+
+describe('formatSummary', () => {
+  const STATS = { total: 10, pending: 5, in_progress: 2, completed: 3 };
+
+  it('shows stats', () => {
+    const result = formatSummary(STATS, [], []);
+    expect(result).toContain('Daily Summary');
+    expect(result).toContain('10 total');
+    expect(result).toContain('5 pending');
+    expect(result).toContain('2 in progress');
+    expect(result).toContain('3 completed');
+  });
+
+  it('shows "None" when no tasks due today', () => {
+    const result = formatSummary(STATS, [], []);
+    expect(result).toContain('Due Today:* None');
+  });
+
+  it('lists today tasks with priority icons', () => {
+    const tasks = [
+      { id: '1', title: 'High task', priority: 'high', status: 'pending', due_date: null },
+      { id: '2', title: 'Low task', priority: 'low', status: 'pending', due_date: null },
+    ];
+    const result = formatSummary(STATS, tasks, []);
+    expect(result).toContain('🔴');
+    expect(result).toContain('*High task*');
+    expect(result).toContain('🔵');
+    expect(result).toContain('*Low task*');
+  });
+
+  it('shows upcoming reminders', () => {
+    const reminders = [
+      { id: 'r1', reminder_time: '2026-02-22T15:00:00.000Z', tasks: { title: 'Call doctor' } },
+    ];
+    const result = formatSummary(STATS, [], reminders);
+    expect(result).toContain('Upcoming Reminders');
+    expect(result).toContain('Call doctor');
+  });
+
+  it('handles reminders with tasks as array (Supabase join)', () => {
+    const reminders = [
+      { id: 'r1', reminder_time: '2026-02-22T15:00:00.000Z', tasks: [{ title: 'Array task' }] },
+    ];
+    const result = formatSummary(STATS, [], reminders);
+    expect(result).toContain('Array task');
+  });
+
+  it('hides reminders section when empty', () => {
+    const result = formatSummary(STATS, [], []);
+    expect(result).not.toContain('Upcoming Reminders');
+  });
+});
+
+describe('formatVideoList', () => {
+  it('returns empty message when no videos', () => {
+    const result = formatVideoList([]);
+    expect(result).toContain('No saved videos');
+  });
+
+  it('formats a YouTube video', () => {
+    const videos = [
+      { id: '1', title: '[YT] Never Gonna Give You Up', description: 'https://youtu.be/abc', status: 'pending', created_at: new Date().toISOString() },
+    ];
+    const result = formatVideoList(videos);
+    expect(result).toContain('Saved Videos');
+    expect(result).toContain('1.');
+    expect(result).toContain('*Never Gonna Give You Up*');
+    expect(result).toContain('YouTube');
+    expect(result).toContain('videos done [number]');
+  });
+
+  it('formats an Instagram video', () => {
+    const videos = [
+      { id: '1', title: '[IG] Instagram Reel', description: 'https://instagram.com/reel/abc', status: 'pending', created_at: new Date().toISOString() },
+    ];
+    const result = formatVideoList(videos);
+    expect(result).toContain('*Instagram Reel*');
+    expect(result).toContain('Instagram');
+  });
+
+  it('numbers videos sequentially', () => {
+    const videos = [
+      { id: '1', title: '[YT] Video One', description: 'url1', status: 'pending', created_at: new Date().toISOString() },
+      { id: '2', title: '[IG] Video Two', description: 'url2', status: 'pending', created_at: new Date().toISOString() },
+    ];
+    const result = formatVideoList(videos);
+    expect(result).toContain('1.');
+    expect(result).toContain('2.');
+  });
+
+  it('shows Today for videos saved today', () => {
+    const videos = [
+      { id: '1', title: '[YT] Fresh Video', description: 'url', status: 'pending', created_at: new Date().toISOString() },
+    ];
+    const result = formatVideoList(videos);
+    expect(result).toContain('Today');
   });
 });

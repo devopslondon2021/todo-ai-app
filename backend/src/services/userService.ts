@@ -12,21 +12,29 @@ export async function getUserById(id: string): Promise<User | null> {
   return data;
 }
 
-export async function getOrCreateByJid(jid: string): Promise<User> {
+export async function getOrCreateByJid(jid: string, pushName?: string): Promise<User> {
   const { data: existing } = await getSupabase()
     .from('users')
     .select('*')
     .eq('whatsapp_jid', jid)
     .single();
 
-  if (existing) return existing;
+  if (existing) {
+    // Update name if we got a pushName and the stored name is just a phone number
+    if (pushName && existing.name === existing.phone_number) {
+      await getSupabase().from('users').update({ name: pushName }).eq('id', existing.id);
+      return { ...existing, name: pushName };
+    }
+    return existing;
+  }
 
   // Extract phone number from JID (format: 1234567890@s.whatsapp.net)
   const phone = jid.split('@')[0];
+  const name = pushName || phone;
 
   const { data: user, error } = await getSupabase()
     .from('users')
-    .insert({ whatsapp_jid: jid, phone_number: phone, name: phone })
+    .insert({ whatsapp_jid: jid, phone_number: phone, name })
     .select('*')
     .single();
 

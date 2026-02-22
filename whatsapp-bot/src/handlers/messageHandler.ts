@@ -2,8 +2,12 @@ import { WASocket, proto } from 'baileys';
 import { parseCommand } from './commandParser.js';
 import * as taskService from '../services/taskService.js';
 import * as aiService from '../services/aiService.js';
-import { formatTaskList, formatHelp, formatCategoryTree } from '../utils/formatter.js';
+import { transcribeVoiceMessage } from '../services/transcriptionService.js';
+import { formatTaskList, formatHelp, formatCategoryTree, formatSummary, formatQueryResult, formatVideoList } from '../utils/formatter.js';
+import * as videoService from '../services/videoService.js';
 import { trackSentMessage, storeSentMessage, getMyPhoneJid } from '../connection/whatsapp.js';
+import { isCallEscalationEnabled } from '../services/callService.js';
+import { env } from '../config/env.js';
 
 // Store pending tasks awaiting dedup confirmation
 const pendingTasks = new Map<string, { userId: string; parsed: aiService.ParsedTask }>();
@@ -112,7 +116,9 @@ export async function handleMessage(
     msg.message?.extendedTextMessage?.text ||
     '';
 
-  if (!text.trim()) return;
+  const isVoiceNote = !!(msg.message?.audioMessage?.ptt);
+
+  if (!text.trim() && !isVoiceNote) return;
 
   const t0 = Date.now();
 
@@ -122,15 +128,16 @@ export async function handleMessage(
   const replyJid = jid.endsWith('@lid') && getMyPhoneJid()
     ? getMyPhoneJid()!
     : jid;
-  console.log(`[HANDLER] START — text="${text.slice(0, 50)}" from=${jid} replyTo=${replyJid}`);
+  console.log(`[HANDLER] START — ${isVoiceNote ? '[voice note]' : `text="${text.slice(0, 50)}"`} from=${jid} replyTo=${replyJid}`);
 
   try {
     // Step 1: Get user (cached)
+    const pushName = msg.pushName || undefined;
     let user = getCachedUser(replyJid);
     let categories: { id: string; name: string }[] = [];
 
     if (!user) {
-      const freshUser = await taskService.getOrCreateUser(replyJid);
+      const freshUser = await taskService.getOrCreateUser(replyJid, pushName);
       user = { id: freshUser.id, name: freshUser.name };
       userCache.set(replyJid, { user, ts: Date.now() });
     }
@@ -152,13 +159,44 @@ export async function handleMessage(
       pendingTasks.delete(jid);
     }
 
+    // ── VOICE NOTE: transcribe → add pipeline ────────────────
+    if (isVoiceNote) {
+      if (env.AI_PROVIDER === 'ollama') {
+        await sendReply(sock, replyJid, '⚠️ Voice notes require OpenAI. Switch AI_PROVIDER to "openai" to use this feature.');
+        return;
+      }
+
+      await sendReply(sock, replyJid, '🎤 Processing voice note...');
+
+      let transcribed: string | null;
+      try {
+        transcribed = await transcribeVoiceMessage(msg);
+      } catch (err) {
+        console.error('[HANDLER] Transcription error:', err);
+        await sendReply(sock, replyJid, '❌ Could not transcribe voice note. Try again.');
+        return;
+      }
+
+      if (!transcribed) {
+        await sendReply(sock, replyJid, '❌ Could not transcribe voice note. Try again.');
+        return;
+      }
+
+      console.log(`[HANDLER] Transcribed: "${transcribed.slice(0, 80)}"`);
+
+      categories = await taskService.getCategories(user.id);
+      processAddInBackground(sock, replyJid, jid, transcribed, user, categories);
+      console.log(`[HANDLER] DONE (voice note ack sent, processing in bg)`);
+      return;
+    }
+
     // Step 2: Parse command (instant)
     const command = parseCommand(text);
     console.log(`[HANDLER] command=${command.type} (${Date.now() - t0}ms)`);
 
     switch (command.type) {
       case 'help':
-        await sendReply(sock, replyJid, formatHelp());
+        await sendReply(sock, replyJid, formatHelp(isCallEscalationEnabled()));
         break;
 
       // ── ADD / REMIND: fire-and-forget ──────────────────────────
@@ -168,7 +206,7 @@ export async function handleMessage(
         if (command.type === 'remind') {
           // Parser gives us text after "remind "/"reminder " — strip "me to " if present
           // to avoid "remind me to me to ..." doubling
-          const body = input.replace(/^me to\s+/i, '');
+          const body = input.replace(/^me\s+(?:to\s+)?/i, '');
           input = `remind me to ${body}`;
         }
 
@@ -220,13 +258,106 @@ export async function handleMessage(
         break;
       }
 
+      // ── VIDEO LINK: save immediately, enrich title in background ──
+      case 'video_link': {
+        try {
+          const saved = await videoService.saveVideo(user.id, command.url, command.platform);
+          await sendReply(sock, replyJid, `📥 Added to *Videos*\n\nType *videos* to see your list.`);
+          // Enrich title in background (no await)
+          videoService.enrichVideoTitle(saved.id, command.url, command.platform);
+        } catch (err) {
+          console.error('[HANDLER] Video save error:', err);
+          await sendReply(sock, replyJid, '❌ Failed to save video. Try again.');
+        }
+        break;
+      }
+
+      // ── VIDEOS: list or mark watched ─────────────────────────
+      case 'videos': {
+        if (command.subcommand === 'done' && command.taskNumber != null) {
+          const vids = await videoService.getVideos(user.id);
+          const video = vids[command.taskNumber - 1];
+          if (!video) {
+            await sendReply(sock, replyJid, `❌ Video #${command.taskNumber} not found. Use "videos" to see your list.`);
+          } else {
+            await videoService.markVideoWatched(video.id);
+            const displayTitle = video.title.replace(/^\[(YT|IG)\]\s*/, '');
+            await sendReply(sock, replyJid, `✅ Watched: *${displayTitle}*`);
+          }
+        } else {
+          const vids = await videoService.getVideos(user.id);
+          await sendReply(sock, replyJid, formatVideoList(vids));
+        }
+        break;
+      }
+
+      case 'summary': {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const todayEnd = new Date();
+        todayEnd.setHours(23, 59, 59, 999);
+
+        const [stats, todayTasks, upcomingReminders] = await Promise.all([
+          taskService.getTaskStats(user.id),
+          taskService.getTasksForWhatsApp(user.id, 'today'),
+          taskService.getUpcomingReminders(user.id),
+        ]);
+
+        await sendReply(sock, replyJid, formatSummary(stats, todayTasks, upcomingReminders));
+        break;
+      }
+
       case 'unknown': {
-        await sendReply(sock, replyJid,
-          `I didn't recognize that command.\n\nUse *add* [task] to create a task, or send *help* for all commands.`
-        );
+        // AI intent classification fallback
+        console.log(`[HANDLER] Classifying intent for: "${command.text.slice(0, 50)}"`);
+        const classified = await aiService.classifyIntent(command.text);
+        console.log(`[HANDLER] AI classified: ${classified.intent} (${Date.now() - t0}ms)`);
+
+        switch (classified.intent) {
+          case 'add': {
+            await sendReply(sock, replyJid, '⏳ Adding...');
+            categories = await taskService.getCategories(user.id);
+            processAddInBackground(sock, replyJid, jid, classified.text, user, categories);
+            return;
+          }
+          case 'remind': {
+            await sendReply(sock, replyJid, '⏳ Adding...');
+            categories = await taskService.getCategories(user.id);
+            processAddInBackground(sock, replyJid, jid, `remind me to ${classified.text}`, user, categories);
+            return;
+          }
+          case 'query': {
+            const tasks = await taskService.getTasksForWhatsApp(user.id, classified.timeFilter, classified.search);
+            await sendReply(sock, replyJid, formatQueryResult(tasks, classified.search, classified.timeFilter));
+            break;
+          }
+          case 'list': {
+            const tasks = await taskService.getTasksForWhatsApp(user.id, classified.timeFilter);
+            await sendReply(sock, replyJid, formatTaskList(tasks));
+            break;
+          }
+          case 'summary': {
+            const todayStart2 = new Date();
+            todayStart2.setHours(0, 0, 0, 0);
+            const [stats2, todayTasks2, upcomingReminders2] = await Promise.all([
+              taskService.getTaskStats(user.id),
+              taskService.getTasksForWhatsApp(user.id, 'today'),
+              taskService.getUpcomingReminders(user.id),
+            ]);
+            await sendReply(sock, replyJid, formatSummary(stats2, todayTasks2, upcomingReminders2));
+            break;
+          }
+          default:
+            await sendReply(sock, replyJid,
+              `I didn't understand that.\n\nUse *add* [task] to create a task, or send *help* for all commands.`
+            );
+        }
         break;
       }
     }
+
+    // Acknowledge recent reminders (any interaction = user is active)
+    taskService.acknowledgeReminders(user.id).catch(() => {});
 
     console.log(`[HANDLER] DONE ✅ — ${Date.now() - t0}ms`);
   } catch (err) {

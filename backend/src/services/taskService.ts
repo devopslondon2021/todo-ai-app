@@ -91,10 +91,34 @@ export async function reorderTasks(items: { id: string; sort_order: number }[]):
 }
 
 export async function getTaskStats(userId: string) {
-  const { data: tasks, error } = await getSupabase()
+  // Exclude "Videos" parent + subcategories (Instagram, YouTube) from stats
+  const { data: videoCat } = await getSupabase()
+    .from('categories')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('name', 'Videos')
+    .is('parent_id', null)
+    .maybeSingle();
+
+  const excludeIds: string[] = [];
+  if (videoCat) {
+    excludeIds.push(videoCat.id);
+    const { data: subs } = await getSupabase()
+      .from('categories')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('parent_id', videoCat.id);
+    if (subs) excludeIds.push(...subs.map(s => s.id));
+  }
+
+  let query = getSupabase()
     .from('tasks')
-    .select('status')
+    .select('status, category_id')
     .eq('user_id', userId);
+
+  if (excludeIds.length > 0) query = query.not('category_id', 'in', `(${excludeIds.join(',')})`);
+
+  const { data: tasks, error } = await query;
 
   if (error) throw error;
 

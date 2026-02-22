@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as taskService from '../services/taskService';
 import * as aiService from '../services/aiService';
 import * as categoryService from '../services/categoryService';
+import * as reminderService from '../services/reminderService';
 import { apiKeyAuth } from '../middleware/apiKeyAuth';
 
 const router = Router();
@@ -151,6 +152,65 @@ router.post('/quick', apiKeyAuth, async (req, res, next) => {
     if (parsed.priority === 'high') message += ' [HIGH]';
 
     res.status(201).json({ data: { task, message } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/tasks/siri/today — Siri "Today's Tasks" shortcut (API key auth)
+router.get('/siri/today', apiKeyAuth, async (req, res, next) => {
+  try {
+    const user = req.apiUser!;
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const [tasks, stats, reminders] = await Promise.all([
+      taskService.getTasks({
+        user_id: user.id,
+        status: 'pending',
+        due_date_from: todayStart.toISOString(),
+        due_date_to: todayEnd.toISOString(),
+      }),
+      taskService.getTaskStats(user.id),
+      reminderService.getReminders(user.id),
+    ]);
+
+    // Filter reminders to today only
+    const todayReminders = reminders.filter((r: any) => {
+      const t = new Date(r.reminder_time);
+      return t >= todayStart && t <= todayEnd;
+    });
+
+    // Build spoken summary for Siri
+    const parts: string[] = [];
+
+    if (tasks.length === 0) {
+      parts.push('You have no tasks due today.');
+    } else {
+      parts.push(`You have ${tasks.length} task${tasks.length === 1 ? '' : 's'} due today.`);
+      tasks.forEach((t: any, i: number) => {
+        const priority = t.priority === 'high' ? ' (high priority)' : '';
+        parts.push(`${i + 1}. ${t.title}${priority}.`);
+      });
+    }
+
+    if (todayReminders.length > 0) {
+      parts.push(`You also have ${todayReminders.length} upcoming reminder${todayReminders.length === 1 ? '' : 's'}.`);
+    }
+
+    parts.push(`Overall: ${stats.pending} pending, ${stats.in_progress} in progress, ${stats.completed} completed.`);
+
+    res.json({
+      data: {
+        tasks,
+        reminders: todayReminders,
+        stats,
+        summary: parts.join(' '),
+      },
+    });
   } catch (err) {
     next(err);
   }

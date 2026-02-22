@@ -39,6 +39,10 @@ vi.mock('../config/supabase.js', () => ({
   }),
 }));
 
+vi.mock('../services/videoService.js', () => ({
+  getAllVideoCategoryIds: vi.fn().mockResolvedValue([]),
+}));
+
 import {
   getOrCreateUser,
   createTaskFromParsed,
@@ -77,7 +81,7 @@ describe('getOrCreateUser', () => {
     expect(mockFrom).toHaveBeenCalledWith('users');
   });
 
-  it('creates new user if not found', async () => {
+  it('creates new user with phone as name if no pushName', async () => {
     const newUser = { id: 'user-2', whatsapp_jid: '456@s.whatsapp.net', name: '456' };
     let singleCount = 0;
 
@@ -116,6 +120,42 @@ describe('getOrCreateUser', () => {
       name: '456',
     });
     expect(mockRpc).toHaveBeenCalledWith('seed_default_categories', { p_user_id: 'user-2' });
+  });
+
+  it('uses pushName as name for new user when provided', async () => {
+    const newUser = { id: 'user-3', whatsapp_jid: '789@s.whatsapp.net', name: 'John Doe' };
+    let singleCount = 0;
+
+    function makeSelfBuilder(table: string): any {
+      const handler: ProxyHandler<any> = {
+        get(_, prop: string) {
+          if (prop === 'then') return undefined;
+          if (prop === 'catch' || prop === 'finally') return () => new Proxy({}, handler);
+          return (...args: any[]) => {
+            recorded.push({ table, method: prop, args });
+            if (prop === 'single') {
+              singleCount++;
+              if (singleCount <= 3) return Promise.resolve({ data: null, error: { code: 'PGRST116' } });
+              return Promise.resolve({ data: newUser, error: null });
+            }
+            return new Proxy({}, handler);
+          };
+        },
+      };
+      return new Proxy({}, handler);
+    }
+
+    mockFrom.mockImplementation((table: string) => makeSelfBuilder(table));
+    mockRpc.mockResolvedValue({ data: null, error: null });
+
+    const result = await getOrCreateUser('789@s.whatsapp.net', 'John Doe');
+    expect(result).toEqual(newUser);
+    const insertCall = findRecorded('insert', 'users');
+    expect(insertCall!.args[0]).toEqual({
+      whatsapp_jid: '789@s.whatsapp.net',
+      phone_number: '789',
+      name: 'John Doe',
+    });
   });
 });
 
@@ -244,6 +284,23 @@ describe('getTasksForWhatsApp', () => {
     expect(findRecorded('gte', 'tasks')).toBeDefined();
     expect(findRecorded('lte', 'tasks')).toBeDefined();
   });
+
+  it('applies ilike search on title when search param provided', async () => {
+    resolveWith = { data: [], error: null };
+    await getTasksForWhatsApp('user-1', 'today', 'meeting');
+    const ilikeCall = findRecorded('ilike', 'tasks');
+    expect(ilikeCall).toBeDefined();
+    expect(ilikeCall!.args).toEqual(['title', '%meeting%']);
+  });
+
+  it('composes search with no filter', async () => {
+    resolveWith = { data: [], error: null };
+    await getTasksForWhatsApp('user-1', undefined, 'meeting');
+    expect(findRecorded('neq', 'tasks')?.args).toEqual(['status', 'completed']);
+    const ilikeCall = findRecorded('ilike', 'tasks');
+    expect(ilikeCall).toBeDefined();
+    expect(ilikeCall!.args).toEqual(['title', '%meeting%']);
+  });
 });
 
 // ─── markComplete ───
@@ -254,6 +311,16 @@ describe('markComplete', () => {
     expect(mockFrom).toHaveBeenCalledWith('tasks');
     expect(findRecorded('update', 'tasks')?.args[0]).toEqual({ status: 'completed' });
     expect(findRecorded('eq', 'tasks')?.args).toEqual(['id', 'task-1']);
+  });
+
+  it('cancels pending reminders for the completed task', async () => {
+    resolveWith = { error: null };
+    await markComplete('task-1');
+    expect(mockFrom).toHaveBeenCalledWith('reminders');
+    expect(findRecorded('update', 'reminders')?.args[0]).toEqual({ is_sent: true });
+    const eqCalls = findAllRecorded('eq', 'reminders');
+    expect(eqCalls.some((c) => c.args[0] === 'task_id' && c.args[1] === 'task-1')).toBe(true);
+    expect(eqCalls.some((c) => c.args[0] === 'is_sent' && c.args[1] === false)).toBe(true);
   });
 });
 

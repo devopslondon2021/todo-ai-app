@@ -201,10 +201,11 @@ export async function connectWhatsApp(onMessage: MessageHandler): Promise<WASock
           continue;
         }
 
-        // Skip empty (failed decryptions arrive as empty)
-        if (!text.trim()) continue;
+        // Skip empty (failed decryptions arrive as empty) — but let voice notes through
+        const hasVoiceNote = !!(msg.message?.audioMessage?.ptt);
+        if (!text.trim() && !hasVoiceNote) continue;
 
-        console.log(`[MSG] ✅ Processing: "${text.slice(0, 50)}" from ${jid}`);
+        console.log(`[MSG] ✅ Processing: ${hasVoiceNote ? '[voice note]' : `"${text.slice(0, 50)}"`} from ${jid}`);
         if (sock === currentSock) {
           try {
             await onMessage(currentSock, msg);

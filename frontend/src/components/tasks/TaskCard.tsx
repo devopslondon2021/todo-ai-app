@@ -8,6 +8,7 @@ import {
   Bell,
   MoreHorizontal,
   Trash2,
+  ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PRIORITY_CONFIG } from "@/lib/constants";
@@ -15,6 +16,25 @@ import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/Toast";
 import { isToday, isTomorrow, isPast } from "date-fns";
 import type { Task } from "@/types";
+
+function InstagramIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
+      <rect x="2" y="2" width="20" height="20" rx="5" stroke="currentColor" strokeWidth="2" />
+      <circle cx="12" cy="12" r="5" stroke="currentColor" strokeWidth="2" />
+      <circle cx="18" cy="6" r="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
+function YouTubeIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
+      <rect x="2" y="4" width="20" height="16" rx="4" stroke="currentColor" strokeWidth="2" />
+      <path d="M10 8.5L16 12L10 15.5V8.5Z" fill="currentColor" />
+    </svg>
+  );
+}
 
 interface TaskCardProps {
   task: Task;
@@ -29,6 +49,14 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
   const { toast } = useToast();
   const priority = PRIORITY_CONFIG[task.priority];
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Detect video platform from title prefix
+  const isInstagram = task.title.startsWith("[IG]");
+  const isYouTube = task.title.startsWith("[YT]");
+  const isVideo = isInstagram || isYouTube;
+
+  // Check if description is a URL (video link)
+  const videoUrl = isVideo && task.description?.startsWith("https://") ? task.description : null;
 
   // Sync local status when task prop changes (after refetch)
   if (task.status !== localStatus && !isTransitioning) {
@@ -53,7 +81,6 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
     if (isTransitioning) return;
     const newStatus = localStatus === "completed" ? "pending" : "completed";
 
-    // Optimistic update
     setLocalStatus(newStatus);
     setIsTransitioning(true);
 
@@ -86,6 +113,14 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
     }
   }
 
+  function handleCardClick(e: React.MouseEvent) {
+    if (!videoUrl) return;
+    // Don't open link if clicking on checkbox, menu, or other buttons
+    const target = e.target as HTMLElement;
+    if (target.closest("button")) return;
+    window.open(videoUrl, "_blank", "noopener");
+  }
+
   function formatDueDate(date: string) {
     const d = new Date(date);
     if (isToday(d)) return "Today";
@@ -101,12 +136,23 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
   const isComplete = localStatus === "completed";
   const justToggled = isTransitioning && localStatus !== task.status;
 
+  const displayTitle = task.title
+    .replace(/^\[(IG|YT)\]\s*/, '')
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+
   const badgeLabel = task.priority === "high" || task.priority === "medium"
     ? priority.label.toUpperCase()
     : task.categories?.name || null;
 
   return (
     <div
+      onClick={handleCardClick}
       className={cn(
         "group flex items-center gap-3 rounded-[var(--radius-md)] border px-3 py-1.5",
         "hover:border-border-light/80 hover:bg-bg-raised/80",
@@ -116,6 +162,7 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
         isDeleting && "scale-[0.97] opacity-0 translate-x-2",
         justToggled && isComplete && "opacity-50 scale-[0.98]",
         justToggled && !isComplete && "opacity-100 scale-100",
+        videoUrl && "cursor-pointer",
       )}
       style={{ transition: "opacity 300ms ease-out, transform 300ms ease-out, background-color 150ms, border-color 150ms" }}
     >
@@ -141,6 +188,18 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
         )}
       </button>
 
+      {/* Platform icon for video tasks */}
+      {isInstagram && (
+        <span className="shrink-0 text-[#E1306C]">
+          <InstagramIcon size={14} />
+        </span>
+      )}
+      {isYouTube && (
+        <span className="shrink-0 text-[#FF0000]">
+          <YouTubeIcon size={14} />
+        </span>
+      )}
+
       {/* Content */}
       <div className="flex-1 min-w-0">
         <h3
@@ -150,7 +209,7 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
           )}
           style={{ transition: "color 300ms, text-decoration-color 300ms" }}
         >
-          {task.title}
+          {displayTitle}
         </h3>
 
         <div className="flex items-center gap-2 mt-0.5">
@@ -177,6 +236,13 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
           )}
         </div>
       </div>
+
+      {/* External link icon for video tasks (visible on hover) */}
+      {videoUrl && (
+        <span className="shrink-0 text-muted/30 group-hover:text-muted transition-colors duration-150">
+          <ExternalLink size={13} aria-hidden="true" />
+        </span>
+      )}
 
       {/* Badge */}
       {badgeLabel && (

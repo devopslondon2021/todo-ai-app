@@ -1,4 +1,5 @@
 import { getSupabase } from '../config/supabase.js';
+import { getAllVideoCategoryIds } from './videoService.js';
 import type { ParsedTask } from './aiService.js';
 
 interface User {
@@ -34,7 +35,7 @@ function getEndOfWeekDefault(): string {
   return friday.toISOString();
 }
 
-export async function getOrCreateUser(jid: string): Promise<User> {
+export async function getOrCreateUser(jid: string, pushName?: string): Promise<User> {
   // 1. Look up by exact JID match
   const { data: existing } = await getSupabase()
     .from('users')
@@ -42,7 +43,14 @@ export async function getOrCreateUser(jid: string): Promise<User> {
     .eq('whatsapp_jid', jid)
     .single();
 
-  if (existing) return existing;
+  if (existing) {
+    // Update name if we got a pushName and the stored name is just a phone number
+    if (pushName && existing.name === existing.phone_number) {
+      await getSupabase().from('users').update({ name: pushName }).eq('id', existing.id);
+      return { ...existing, name: pushName };
+    }
+    return existing;
+  }
 
   const isLid = jid.endsWith('@lid');
   const userPart = jid.split('@')[0];
@@ -57,9 +65,11 @@ export async function getOrCreateUser(jid: string): Promise<User> {
       .single();
 
     if (byPhone) {
-      // Link WhatsApp JID to this existing user
-      await getSupabase().from('users').update({ whatsapp_jid: jid }).eq('id', byPhone.id);
-      return { ...byPhone, whatsapp_jid: jid };
+      // Link WhatsApp JID + update name if available
+      const updates: Record<string, any> = { whatsapp_jid: jid };
+      if (pushName && byPhone.name === byPhone.phone_number) updates.name = pushName;
+      await getSupabase().from('users').update(updates).eq('id', byPhone.id);
+      return { ...byPhone, ...updates };
     }
   }
 
@@ -72,15 +82,17 @@ export async function getOrCreateUser(jid: string): Promise<User> {
     .single();
 
   if (unlinked) {
-    await getSupabase()
-      .from('users')
-      .update({ whatsapp_jid: jid, phone_number: phone || unlinked.phone_number })
-      .eq('id', unlinked.id);
-    return { ...unlinked, whatsapp_jid: jid };
+    const updates: Record<string, any> = {
+      whatsapp_jid: jid,
+      phone_number: phone || unlinked.phone_number,
+    };
+    if (pushName) updates.name = pushName;
+    await getSupabase().from('users').update(updates).eq('id', unlinked.id);
+    return { ...unlinked, ...updates };
   }
 
   // 4. No existing user found — create a new one
-  const name = phone || `User-${userPart.slice(-4)}`;
+  const name = pushName || phone || `User-${userPart.slice(-4)}`;
   const { data: user, error } = await getSupabase()
     .from('users')
     .insert({ whatsapp_jid: jid, phone_number: phone, name })
@@ -186,7 +198,9 @@ export async function createTaskFromParsed(userId: string, parsed: ParsedTask): 
 }
 
 export async function getRecentTasks(userId: string): Promise<Task[]> {
-  const { data, error } = await getSupabase()
+  const videoCatIds = await getAllVideoCategoryIds(userId);
+
+  let query = getSupabase()
     .from('tasks')
     .select('*, categories(name)')
     .eq('user_id', userId)
@@ -194,17 +208,24 @@ export async function getRecentTasks(userId: string): Promise<Task[]> {
     .order('created_at', { ascending: false })
     .limit(20);
 
+  if (videoCatIds.length > 0) query = query.not('category_id', 'in', `(${videoCatIds.join(',')})`);
+
+  const { data, error } = await query;
   if (error) throw error;
   return data || [];
 }
 
-export async function getTasksForWhatsApp(userId: string, filter?: string): Promise<Task[]> {
+export async function getTasksForWhatsApp(userId: string, filter?: string, search?: string): Promise<Task[]> {
+  const videoCatIds = await getAllVideoCategoryIds(userId);
+
   let query = getSupabase()
     .from('tasks')
     .select('*, categories(name)')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(20);
+
+  if (videoCatIds.length > 0) query = query.not('category_id', 'in', `(${videoCatIds.join(',')})`);
 
   if (filter) {
     const f = filter.toLowerCase();
@@ -224,6 +245,10 @@ export async function getTasksForWhatsApp(userId: string, filter?: string): Prom
     query = query.neq('status', 'completed');
   }
 
+  if (search) {
+    query = query.ilike('title', `%${search}%`);
+  }
+
   const { data, error } = await query;
   if (error) throw error;
   return data || [];
@@ -231,6 +256,8 @@ export async function getTasksForWhatsApp(userId: string, filter?: string): Prom
 
 export async function markComplete(taskId: string): Promise<void> {
   await getSupabase().from('tasks').update({ status: 'completed' }).eq('id', taskId);
+  // Cancel any unsent reminders for this task
+  await getSupabase().from('reminders').update({ is_sent: true }).eq('task_id', taskId).eq('is_sent', false);
 }
 
 export async function deleteTask(taskId: string): Promise<void> {
@@ -243,6 +270,86 @@ export async function getCategories(userId: string) {
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
+
+/** Mark recent unacknowledged reminders as acknowledged for a user */
+export async function acknowledgeReminders(userId: string): Promise<void> {
+  const thirtyMinAgo = new Date(Date.now() - 30 * 60_000).toISOString();
+
+  await getSupabase()
+    .from('reminders')
+    .update({ acknowledged: true })
+    .eq('user_id', userId)
+    .eq('is_sent', true)
+    .eq('acknowledged', false)
+    .gte('sent_at', thirtyMinAgo);
+}
+
+/** Get sent, unacknowledged, non-escalated reminders older than delayMin */
+export async function getEscalationCandidates(delayMin: number) {
+  const cutoff = new Date(Date.now() - delayMin * 60_000).toISOString();
+
+  const { data, error } = await getSupabase()
+    .from('reminders')
+    .select(`
+      id,
+      tasks (title),
+      users (whatsapp_jid)
+    `)
+    .eq('is_sent', true)
+    .eq('acknowledged', false)
+    .eq('call_escalated', false)
+    .lte('sent_at', cutoff)
+    .limit(50);
+
+  if (error) {
+    console.error('[ESCALATION] Query error:', error);
+    return [];
+  }
+  return data || [];
+}
+
+/** Mark a reminder as call-escalated */
+export async function markCallEscalated(reminderId: string): Promise<void> {
+  await getSupabase()
+    .from('reminders')
+    .update({ call_escalated: true })
+    .eq('id', reminderId);
+}
+
+export async function getTaskStats(userId: string) {
+  const videoCatIds = await getAllVideoCategoryIds(userId);
+
+  let query = getSupabase()
+    .from('tasks')
+    .select('status')
+    .eq('user_id', userId);
+
+  if (videoCatIds.length > 0) query = query.not('category_id', 'in', `(${videoCatIds.join(',')})`);
+
+  const { data: tasks, error } = await query;
+  if (error) throw error;
+
+  const stats = { total: 0, pending: 0, in_progress: 0, completed: 0 };
+  for (const task of tasks || []) {
+    stats.total++;
+    const s = task.status as keyof typeof stats;
+    if (s in stats) stats[s]++;
+  }
+  return stats;
+}
+
+export async function getUpcomingReminders(userId: string) {
+  const { data, error } = await getSupabase()
+    .from('reminders')
+    .select('id, reminder_time, tasks(title)')
+    .eq('user_id', userId)
+    .eq('is_sent', false)
+    .order('reminder_time', { ascending: true })
+    .limit(10);
 
   if (error) throw error;
   return data || [];
