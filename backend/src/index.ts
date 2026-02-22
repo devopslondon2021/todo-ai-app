@@ -6,6 +6,7 @@ import categoryRoutes from './routes/categories';
 import reminderRoutes from './routes/reminders';
 import userRoutes from './routes/users';
 import settingsRoutes from './routes/settings';
+import calendarRoutes from './routes/calendar';
 import { errorHandler } from './middleware/errorHandler';
 
 const app = express();
@@ -19,6 +20,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/reminders', reminderRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/calendar', calendarRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));

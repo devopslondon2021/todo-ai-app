@@ -8,14 +8,16 @@ import {
   Bell,
   MoreHorizontal,
   Trash2,
+  Pencil,
   ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PRIORITY_CONFIG } from "@/lib/constants";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/Toast";
-import { isToday, isTomorrow, isPast } from "date-fns";
-import type { Task } from "@/types";
+import { TaskEditModal } from "./TaskEditModal";
+import { isToday, isTomorrow, isPast, startOfDay } from "date-fns";
+import type { Task, Category } from "@/types";
 
 function InstagramIcon({ size = 14 }: { size?: number }) {
   return (
@@ -39,13 +41,15 @@ function YouTubeIcon({ size = 14 }: { size?: number }) {
 interface TaskCardProps {
   task: Task;
   onUpdate: () => void;
+  categories?: Category[];
 }
 
-export function TaskCard({ task, onUpdate }: TaskCardProps) {
+export function TaskCard({ task, onUpdate, categories = [] }: TaskCardProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [localStatus, setLocalStatus] = useState(task.status);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const { toast } = useToast();
   const priority = PRIORITY_CONFIG[task.priority];
   const menuRef = useRef<HTMLDivElement>(null);
@@ -55,8 +59,10 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
   const isYouTube = task.title.startsWith("[YT]");
   const isVideo = isInstagram || isYouTube;
 
-  // Check if description is a URL (video link)
-  const videoUrl = isVideo && task.description?.startsWith("https://") ? task.description : null;
+  // Check if description starts with a URL (video link or meeting link)
+  const descriptionUrl = task.description?.startsWith("https://") ? task.description.split("\n")[0] : null;
+  const isMeeting = !!task.google_event_id;
+  const clickableUrl = (isVideo || isMeeting) && descriptionUrl ? descriptionUrl : null;
 
   // Sync local status when task prop changes (after refetch)
   if (task.status !== localStatus && !isTransitioning) {
@@ -114,11 +120,13 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
   }
 
   function handleCardClick(e: React.MouseEvent) {
-    if (!videoUrl) return;
-    // Don't open link if clicking on checkbox, menu, or other buttons
     const target = e.target as HTMLElement;
     if (target.closest("button")) return;
-    window.open(videoUrl, "_blank", "noopener");
+    if (clickableUrl) {
+      window.open(clickableUrl, "_blank", "noopener");
+      return;
+    }
+    setEditOpen(true);
   }
 
   function formatDueDate(date: string) {
@@ -132,7 +140,7 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
     return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(date));
   }
 
-  const isOverdue = task.due_date && isPast(new Date(task.due_date)) && localStatus !== "completed";
+  const isOverdue = task.due_date && isPast(new Date(task.due_date)) && !isToday(new Date(task.due_date)) && localStatus !== "completed";
   const isComplete = localStatus === "completed";
   const justToggled = isTransitioning && localStatus !== task.status;
 
@@ -162,7 +170,7 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
         isDeleting && "scale-[0.97] opacity-0 translate-x-2",
         justToggled && isComplete && "opacity-50 scale-[0.98]",
         justToggled && !isComplete && "opacity-100 scale-100",
-        videoUrl && "cursor-pointer",
+        "cursor-pointer",
       )}
       style={{ transition: "opacity 300ms ease-out, transform 300ms ease-out, background-color 150ms, border-color 150ms" }}
     >
@@ -197,6 +205,11 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
       {isYouTube && (
         <span className="shrink-0 text-[#FF0000]">
           <YouTubeIcon size={14} />
+        </span>
+      )}
+      {isMeeting && !isVideo && (
+        <span className="shrink-0 text-[#8B5CF6]">
+          <Calendar size={14} aria-hidden="true" />
         </span>
       )}
 
@@ -238,9 +251,16 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
       </div>
 
       {/* External link icon for video tasks (visible on hover) */}
-      {videoUrl && (
+      {clickableUrl && (
         <span className="shrink-0 text-muted/30 group-hover:text-muted transition-colors duration-150">
           <ExternalLink size={13} aria-hidden="true" />
+        </span>
+      )}
+
+      {/* Overdue badge */}
+      {isOverdue && (
+        <span className="shrink-0 rounded-[var(--radius-sm)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-red-500/20 text-red-400 border border-red-500/20">
+          Overdue
         </span>
       )}
 
@@ -291,6 +311,15 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
             >
               <button
                 role="menuitem"
+                onClick={() => { setMenuOpen(false); setEditOpen(true); }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-[12px] text-text-secondary hover:bg-surface-hover cursor-pointer focus-visible:bg-surface-hover focus-visible:outline-none"
+                style={{ transition: "background-color 150ms" }}
+              >
+                <Pencil size={12} aria-hidden="true" />
+                Edit
+              </button>
+              <button
+                role="menuitem"
                 onClick={handleDelete}
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-[12px] text-danger hover:bg-surface-hover cursor-pointer focus-visible:bg-surface-hover focus-visible:outline-none"
                 style={{ transition: "background-color 150ms" }}
@@ -302,6 +331,15 @@ export function TaskCard({ task, onUpdate }: TaskCardProps) {
           </>
         )}
       </div>
+
+      {/* Edit modal */}
+      <TaskEditModal
+        task={task}
+        categories={categories}
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        onUpdate={onUpdate}
+      />
     </div>
   );
 }

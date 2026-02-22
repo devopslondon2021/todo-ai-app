@@ -56,7 +56,7 @@ router.get('/stats', async (req, res, next) => {
   }
 });
 
-// POST /api/tasks/parse — AI natural language parsing
+// POST /api/tasks/parse — AI natural language parsing (supports multi-task input)
 router.post('/parse', async (req, res, next) => {
   try {
     const { text, user_id, category_names } = req.body;
@@ -65,35 +65,38 @@ router.post('/parse', async (req, res, next) => {
       return;
     }
 
-    const parsed = await aiService.parseNaturalLanguage(text, category_names);
+    // Split into individual tasks
+    const taskInputs = await aiService.splitMultiTaskInput(text);
 
-    // Resolve category + subcategory path → category_id
-    const category_id = await categoryService.resolveCategoryPath(
-      user_id,
-      parsed.category,
-      parsed.subcategory
+    // Parse all tasks in parallel
+    const parsedAll = await Promise.all(
+      taskInputs.map(t => aiService.parseNaturalLanguage(t, category_names))
     );
 
-    // Apply end-of-week default if no due_date detected
-    let due_date = parsed.due_date;
-    let due_date_is_default = false;
-    if (!due_date) {
-      due_date = getEndOfWeekDefault();
-      due_date_is_default = true;
-    }
+    // Resolve categories, defaults, and duplicates for each
+    const results = await Promise.all(
+      parsedAll.map(async (parsed) => {
+        const category_id = await categoryService.resolveCategoryPath(
+          user_id, parsed.category, parsed.subcategory
+        );
 
-    // Check for duplicate tasks
-    const duplicates = await taskService.findDuplicates(user_id, parsed.title);
+        let due_date = parsed.due_date;
+        let due_date_is_default = false;
+        if (!due_date) {
+          due_date = getEndOfWeekDefault();
+          due_date_is_default = true;
+        }
 
+        const duplicates = await taskService.findDuplicates(user_id, parsed.title);
+
+        return { ...parsed, category_id, due_date, due_date_is_default, duplicates, user_id };
+      })
+    );
+
+    // Return single task for backwards compatibility, array in `tasks` for multi
     res.json({
-      data: {
-        ...parsed,
-        category_id,
-        due_date,
-        due_date_is_default,
-        duplicates,
-        user_id,
-      },
+      data: results[0],
+      tasks: results.length > 1 ? results : undefined,
     });
   } catch (err) {
     next(err);

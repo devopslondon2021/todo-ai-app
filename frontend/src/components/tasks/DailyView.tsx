@@ -15,12 +15,13 @@ import { cn } from "@/lib/utils";
 import { format, addDays, isToday, isSameDay } from "date-fns";
 import { TaskCard } from "./TaskCard";
 import { sortTasksCompletedLast } from "@/lib/taskSort";
-import type { Task } from "@/types";
+import type { Task, Category } from "@/types";
 
 interface DailyViewProps {
   tasks: Task[];
   loading: boolean;
   onUpdate: () => void;
+  categories?: Category[];
 }
 
 type TimeGroup = {
@@ -69,7 +70,7 @@ const TIME_GROUPS: TimeGroup[] = [
   },
 ];
 
-export function DailyView({ tasks, loading, onUpdate }: DailyViewProps) {
+export function DailyView({ tasks, loading, onUpdate, categories = [] }: DailyViewProps) {
   const [date, setDate] = useState(new Date());
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
@@ -151,7 +152,7 @@ export function DailyView({ tasks, loading, onUpdate }: DailyViewProps) {
             {!isCollapsed && (
               <div className="space-y-1.5">
                 {groupTasks.map((task) => (
-                  <TaskCard key={task.id} task={task} onUpdate={onUpdate} />
+                  <TaskCard key={task.id} task={task} onUpdate={onUpdate} categories={categories} />
                 ))}
               </div>
             )}

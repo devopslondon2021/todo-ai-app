@@ -18,4 +18,5 @@ export const env = {
   TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN || '',
   TWILIO_PHONE_NUMBER: process.env.TWILIO_PHONE_NUMBER || '',
   CALL_ESCALATION_DELAY_MIN: parseInt(process.env.CALL_ESCALATION_DELAY_MIN || '5', 10),
+  BACKEND_URL: process.env.BACKEND_URL || 'http://localhost:3001',
 };

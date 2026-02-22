@@ -210,10 +210,10 @@ function Dashboard() {
             )}
 
             {viewMode === "list" && (
-              <TaskList tasks={tasks} loading={!isDemo && tasksLoading} onUpdate={handleRefetch} />
+              <TaskList tasks={tasks} loading={!isDemo && tasksLoading} onUpdate={handleRefetch} categories={categories} />
             )}
             {viewMode === "daily" && (
-              <DailyView tasks={tasks} loading={!isDemo && tasksLoading} onUpdate={handleRefetch} />
+              <DailyView tasks={tasks} loading={!isDemo && tasksLoading} onUpdate={handleRefetch} categories={categories} />
             )}
             {viewMode === "weekly" && (
               <WeeklyView tasks={tasks} loading={!isDemo && tasksLoading} onUpdate={handleRefetch} />

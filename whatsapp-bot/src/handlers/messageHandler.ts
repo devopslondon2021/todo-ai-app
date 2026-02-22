@@ -2,8 +2,9 @@ import { WASocket, proto } from 'baileys';
 import { parseCommand } from './commandParser.js';
 import * as taskService from '../services/taskService.js';
 import * as aiService from '../services/aiService.js';
+import * as calendarService from '../services/calendarService.js';
 import { transcribeVoiceMessage } from '../services/transcriptionService.js';
-import { formatTaskList, formatHelp, formatCategoryTree, formatSummary, formatQueryResult, formatVideoList } from '../utils/formatter.js';
+import { formatTaskList, formatHelp, formatCategoryTree, formatSummary, formatQueryResult, formatVideoList, formatMeetingList } from '../utils/formatter.js';
 import * as videoService from '../services/videoService.js';
 import { trackSentMessage, storeSentMessage, getMyPhoneJid } from '../connection/whatsapp.js';
 import { isCallEscalationEnabled } from '../services/callService.js';
@@ -49,7 +50,127 @@ async function sendReply(sock: WASocket, jid: string, text: string) {
   }
 }
 
-/** Process add/remind commands in the background — ack already sent */
+/** Format a single task reply line */
+function formatTaskReply(task: { title: string; priority: string; due_date: string | null; reminder_time: string | null; categories?: { name: string } | null }): string {
+  let reply = `✅ *${task.title}* added\n`;
+  reply += `${task.priority === 'high' ? '🔴 High' : task.priority === 'medium' ? '🟡 Medium' : '🔵 Low'}`;
+  if (task.categories?.name) reply += ` · ${task.categories.name}`;
+  if (task.due_date) reply += `\n📅 ${new Date(task.due_date).toLocaleString()}`;
+  if (task.reminder_time) reply += `\n🔔 ${new Date(task.reminder_time).toLocaleString()}`;
+  return reply;
+}
+
+/** Process a single parsed task — returns reply string */
+async function processSingleTask(
+  parsed: aiService.ParsedTask,
+  user: { id: string; name: string },
+  jid: string,
+): Promise<string> {
+  // ── MEETING FLOW ──
+  if (parsed.is_meeting) {
+    const durationMin = parsed.duration_minutes || 30;
+    parsed.category = 'Meetings';
+
+    const categoryId = await taskService.resolveCategoryPath(user.id, 'Meetings', null);
+
+    let googleEventId: string | undefined;
+    let calendarNote = '';
+    let conflictWarning = '';
+
+    const calConnected = await taskService.isCalendarConnected(user.id);
+
+    if (calConnected && parsed.due_date) {
+      try {
+        const startTime = new Date(parsed.due_date);
+        const endTime = new Date(startTime.getTime() + durationMin * 60 * 1000);
+
+        try {
+          const avail = await calendarService.checkAvailability(
+            user.id, startTime.toISOString(), endTime.toISOString()
+          );
+          if (!avail.free) {
+            conflictWarning = avail.conflicts
+              .map(c => {
+                const cStart = new Date(c.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                const cEnd = new Date(c.end).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                return `⚠️ Conflict: "${c.summary}" ${cStart} - ${cEnd}`;
+              }).join('\n');
+          }
+        } catch (err: any) {
+          if (err.message === 'SCOPE_UPGRADE_NEEDED') {
+            calendarNote = '⚠️ Reconnect Google Calendar in Settings to enable event creation';
+          }
+        }
+
+        if (!calendarNote) {
+          try {
+            const event = await calendarService.createEvent(user.id, {
+              summary: parsed.title, start: startTime.toISOString(),
+              duration_minutes: durationMin, attendee_names: parsed.attendees || undefined,
+            });
+            googleEventId = event.eventId;
+            calendarNote = '📅 Added to Google Calendar';
+          } catch (err: any) {
+            if (err.message === 'SCOPE_UPGRADE_NEEDED') {
+              calendarNote = '⚠️ Reconnect Google Calendar in Settings to enable event creation';
+            } else {
+              console.warn('[BG] Calendar event creation failed:', err);
+              calendarNote = '⚠️ Could not add to Google Calendar';
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[BG] Calendar flow error:', err);
+      }
+    } else if (!calConnected) {
+      calendarNote = '💡 Connect Google Calendar in Settings to auto-sync';
+    }
+
+    const task = await taskService.createTask(user.id, parsed, categoryId, googleEventId);
+
+    let reply = `✅ *${task.title}* scheduled\n`;
+    reply += `${task.priority === 'high' ? '🔴 High' : task.priority === 'medium' ? '🟡 Medium' : '🔵 Low'} · Meetings`;
+    if (task.due_date) {
+      const d = new Date(task.due_date);
+      const now = new Date();
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const dayPart = d.toDateString() === now.toDateString() ? 'Today'
+        : d.toDateString() === tomorrow.toDateString() ? 'Tomorrow'
+        : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      reply += `\n🕐 ${dayPart} at ${timePart} (${durationMin}min)`;
+    }
+    if (parsed.attendees?.length) reply += `\n👥 ${parsed.attendees.join(', ')}`;
+    if (task.reminder_time) {
+      reply += `\n🔔 ${new Date(task.reminder_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    }
+    if (conflictWarning) reply += `\n${conflictWarning}`;
+    if (calendarNote) reply += `\n${calendarNote}`;
+    return reply;
+  }
+
+  // ── REGULAR TASK FLOW ──
+  const [duplicates, categoryId] = await Promise.all([
+    taskService.findDuplicates(user.id, parsed.title),
+    taskService.resolveCategoryPath(user.id, parsed.category, parsed.subcategory),
+  ]);
+
+  // Skip dedup for multi-task batches — only prompt for single tasks
+  // (handled by caller)
+  if (duplicates.length > 0) {
+    pendingTasks.set(jid, { userId: user.id, parsed });
+    const dupList = duplicates
+      .map((d) => `• "${d.title}" (${Math.round(d.similarity_score * 100)}% match)`)
+      .join('\n');
+    return `⚠️ *Similar task(s) found:*\n\n${dupList}\n\nStill create "*${parsed.title}*"?\nReply *yes* or *no*`;
+  }
+
+  const task = await taskService.createTask(user.id, parsed, categoryId);
+  return formatTaskReply(task);
+}
+
+/** Process add/remind/meet commands in the background — ack already sent */
 async function processAddInBackground(
   sock: WASocket,
   replyJid: string,
@@ -62,40 +183,41 @@ async function processAddInBackground(
   try {
     const categoryNames = categories.map(c => c.name);
 
-    const t1 = Date.now();
-    const parsed = await aiService.parseNaturalLanguage(input, categoryNames);
-    console.log(`[BG] AI parsed "${parsed.title}" due=${parsed.due_date} remind=${parsed.reminder_time} (${Date.now() - t1}ms)`);
+    // Step 1: Split into individual tasks
+    const taskInputs = await aiService.splitMultiTaskInput(input);
+    const isMulti = taskInputs.length > 1;
+    console.log(`[BG] Split into ${taskInputs.length} task(s) (${Date.now() - t0}ms)`);
 
-    // Dedup + category resolution in parallel
-    const t2 = Date.now();
-    const [duplicates, categoryId] = await Promise.all([
-      taskService.findDuplicates(user.id, parsed.title),
-      taskService.resolveCategoryPath(user.id, parsed.category, parsed.subcategory),
-    ]);
-    console.log(`[BG] dedup+cat resolved (${Date.now() - t2}ms)`);
+    // Step 2: Parse each task in parallel
+    const parsedTasks = await Promise.all(
+      taskInputs.map(t => aiService.parseNaturalLanguage(t, categoryNames))
+    );
+    console.log(`[BG] Parsed ${parsedTasks.length} task(s) (${Date.now() - t0}ms)`);
 
-    if (duplicates.length > 0) {
-      const dupList = duplicates
-        .map((d) => `• "${d.title}" (${Math.round(d.similarity_score * 100)}% match)`)
-        .join('\n');
-      pendingTasks.set(jid, { userId: user.id, parsed });
-      await sendReply(sock, replyJid,
-        `⚠️ *Similar task(s) found:*\n\n${dupList}\n\nStill create "*${parsed.title}*"?\nReply *yes* or *no*`
-      );
-      console.log(`[BG] DONE (dedup prompt) — ${Date.now() - t0}ms`);
-      return;
+    // Step 3: Process each task
+    const replies: string[] = [];
+    for (const parsed of parsedTasks) {
+      // For multi-task, skip dedup prompts (don't interrupt batch with yes/no)
+      if (isMulti) {
+        const categoryId = parsed.is_meeting
+          ? await taskService.resolveCategoryPath(user.id, 'Meetings', null)
+          : await taskService.resolveCategoryPath(user.id, parsed.category, parsed.subcategory);
+        if (parsed.is_meeting) parsed.category = 'Meetings';
+        const task = await taskService.createTask(user.id, parsed, categoryId);
+        replies.push(formatTaskReply(task));
+      } else {
+        const reply = await processSingleTask(parsed, user, jid);
+        replies.push(reply);
+      }
     }
 
-    const task = await taskService.createTask(user.id, parsed, categoryId);
+    if (isMulti) {
+      await sendReply(sock, replyJid, `📋 *${parsedTasks.length} tasks added:*\n\n${replies.join('\n\n')}`);
+    } else {
+      await sendReply(sock, replyJid, replies[0]);
+    }
 
-    let reply = `✅ *${task.title}* added\n`;
-    reply += `Priority: ${task.priority === 'high' ? '🔴 High' : task.priority === 'medium' ? '🟡 Medium' : '🔵 Low'}`;
-    if (task.categories?.name) reply += ` · ${task.categories.name}`;
-    if (task.due_date) reply += `\n📅 ${new Date(task.due_date).toLocaleString()}`;
-    if (task.reminder_time) reply += `\n🔔 ${new Date(task.reminder_time).toLocaleString()}`;
-
-    await sendReply(sock, replyJid, reply);
-    console.log(`[BG] DONE ✅ task=${task.id} — ${Date.now() - t0}ms`);
+    console.log(`[BG] DONE ✅ ${parsedTasks.length} task(s) — ${Date.now() - t0}ms`);
   } catch (err) {
     console.error('[BG] ERROR:', err);
     try {
@@ -199,6 +321,15 @@ export async function handleMessage(
         await sendReply(sock, replyJid, formatHelp(isCallEscalationEnabled()));
         break;
 
+      // ── MEET: schedule a meeting ────────────────────────────────
+      case 'meet': {
+        await sendReply(sock, replyJid, '⏳ Scheduling meeting...');
+        categories = await taskService.getCategories(user.id);
+        processAddInBackground(sock, replyJid, jid, `schedule a meeting ${command.text}`, user, categories);
+        console.log(`[HANDLER] DONE (meet ack sent, processing in bg)`);
+        return;
+      }
+
       // ── ADD / REMIND: fire-and-forget ──────────────────────────
       case 'add':
       case 'remind': {
@@ -233,6 +364,17 @@ export async function handleMessage(
         const task = tasks[command.taskNumber - 1];
         if (!task) {
           await sendReply(sock, replyJid, `❌ Task #${command.taskNumber} not found. Use "list" to see tasks.`);
+        } else {
+          await taskService.markComplete(task.id);
+          await sendReply(sock, replyJid, `✅ Completed: *${task.title}*`);
+        }
+        break;
+      }
+
+      case 'done_search': {
+        const task = await taskService.findTaskByKeywords(user.id, command.search);
+        if (!task) {
+          await sendReply(sock, replyJid, `❌ No active task matching "${command.search}" found.`);
         } else {
           await taskService.markComplete(task.id);
           await sendReply(sock, replyJid, `✅ Completed: *${task.title}*`);
@@ -291,6 +433,13 @@ export async function handleMessage(
         break;
       }
 
+      // ── MEETINGS: list upcoming calendar meetings ─────────────────
+      case 'meetings': {
+        const meetings = await taskService.getMeetings(user.id);
+        await sendReply(sock, replyJid, formatMeetingList(meetings));
+        break;
+      }
+
       case 'summary': {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
@@ -320,11 +469,27 @@ export async function handleMessage(
             processAddInBackground(sock, replyJid, jid, classified.text, user, categories);
             return;
           }
+          case 'meet': {
+            await sendReply(sock, replyJid, '⏳ Scheduling meeting...');
+            categories = await taskService.getCategories(user.id);
+            processAddInBackground(sock, replyJid, jid, classified.text, user, categories);
+            return;
+          }
           case 'remind': {
             await sendReply(sock, replyJid, '⏳ Adding...');
             categories = await taskService.getCategories(user.id);
             processAddInBackground(sock, replyJid, jid, `remind me to ${classified.text}`, user, categories);
             return;
+          }
+          case 'done': {
+            const task = await taskService.findTaskByKeywords(user.id, classified.search);
+            if (!task) {
+              await sendReply(sock, replyJid, `❌ No active task matching "${classified.search}" found.`);
+            } else {
+              await taskService.markComplete(task.id);
+              await sendReply(sock, replyJid, `✅ Completed: *${task.title}*`);
+            }
+            break;
           }
           case 'query': {
             const tasks = await taskService.getTasksForWhatsApp(user.id, classified.timeFilter, classified.search);

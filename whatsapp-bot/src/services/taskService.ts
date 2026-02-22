@@ -152,23 +152,37 @@ export async function findDuplicates(userId: string, title: string): Promise<Dup
   return data || [];
 }
 
+/** Check if a user has Google Calendar connected */
+export async function isCalendarConnected(userId: string): Promise<boolean> {
+  const { data } = await getSupabase()
+    .from('users')
+    .select('google_calendar_connected')
+    .eq('id', userId)
+    .single();
+
+  return !!data?.google_calendar_connected;
+}
+
 /** Create task with pre-resolved categoryId (avoids duplicate resolution) */
-export async function createTask(userId: string, parsed: ParsedTask, categoryId?: string): Promise<Task> {
+export async function createTask(userId: string, parsed: ParsedTask, categoryId?: string, googleEventId?: string): Promise<Task> {
   const dueDate = parsed.due_date || getEndOfWeekDefault();
+
+  const insertData: Record<string, any> = {
+    user_id: userId,
+    title: parsed.title,
+    description: parsed.description,
+    priority: parsed.priority,
+    category_id: categoryId,
+    due_date: dueDate,
+    reminder_time: parsed.reminder_time,
+    is_recurring: parsed.is_recurring,
+    recurrence_rule: parsed.recurrence_rule,
+  };
+  if (googleEventId) insertData.google_event_id = googleEventId;
 
   const { data: task, error } = await getSupabase()
     .from('tasks')
-    .insert({
-      user_id: userId,
-      title: parsed.title,
-      description: parsed.description,
-      priority: parsed.priority,
-      category_id: categoryId,
-      due_date: dueDate,
-      reminder_time: parsed.reminder_time,
-      is_recurring: parsed.is_recurring,
-      recurrence_rule: parsed.recurrence_rule,
-    })
+    .insert(insertData)
     .select('*, categories(name)')
     .single();
 
@@ -215,6 +229,52 @@ export async function getRecentTasks(userId: string): Promise<Task[]> {
   return data || [];
 }
 
+/** Parse a time filter string into a date range */
+function parseTimeFilter(filter: string): { start: Date; end: Date } | null {
+  const f = filter.toLowerCase();
+  const now = new Date();
+
+  if (f === 'today') {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }
+
+  if (f === 'tomorrow') {
+    const start = new Date(now);
+    start.setDate(start.getDate() + 1);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }
+
+  if (f === 'this week') {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(now);
+    const daysUntilSunday = 7 - now.getDay();
+    end.setDate(now.getDate() + daysUntilSunday);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }
+
+  if (f === 'next week') {
+    const daysUntilNextMon = ((8 - now.getDay()) % 7) || 7;
+    const start = new Date(now);
+    start.setDate(now.getDate() + daysUntilNextMon);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }
+
+  return null;
+}
+
 export async function getTasksForWhatsApp(userId: string, filter?: string, search?: string): Promise<Task[]> {
   const videoCatIds = await getAllVideoCategoryIds(userId);
 
@@ -222,19 +282,19 @@ export async function getTasksForWhatsApp(userId: string, filter?: string, searc
     .from('tasks')
     .select('*, categories(name)')
     .eq('user_id', userId)
-    .order('created_at', { ascending: false })
+    .order('due_date', { ascending: true, nullsFirst: false })
     .limit(20);
 
   if (videoCatIds.length > 0) query = query.not('category_id', 'in', `(${videoCatIds.join(',')})`);
 
   if (filter) {
     const f = filter.toLowerCase();
-    if (f === 'today') {
-      const start = new Date();
-      start.setHours(0, 0, 0, 0);
-      const end = new Date();
-      end.setHours(23, 59, 59, 999);
-      query = query.gte('due_date', start.toISOString()).lte('due_date', end.toISOString());
+    const dateRange = parseTimeFilter(f);
+
+    if (dateRange) {
+      query = query
+        .gte('due_date', dateRange.start.toISOString())
+        .lte('due_date', dateRange.end.toISOString());
     } else if (['pending', 'in_progress', 'completed'].includes(f)) {
       query = query.eq('status', f);
     } else {
@@ -242,16 +302,59 @@ export async function getTasksForWhatsApp(userId: string, filter?: string, searc
       query = query.ilike('categories.name' as any, f);
     }
   } else {
-    query = query.neq('status', 'completed');
+    // Default list: exclude completed, only show today and future tasks
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    query = query
+      .neq('status', 'completed')
+      .gte('due_date', todayStart.toISOString());
   }
 
   if (search) {
-    query = query.ilike('title', `%${search}%`);
+    const keywords = search.split(/\s+/).filter(w => w.length >= 2);
+    if (keywords.length > 1) {
+      // Match tasks containing ANY keyword (OR)
+      query = query.or(keywords.map(k => `title.ilike.%${k}%`).join(','));
+    } else if (keywords.length === 1) {
+      query = query.ilike('title', `%${keywords[0]}%`);
+    }
   }
 
   const { data, error } = await query;
   if (error) throw error;
   return data || [];
+}
+
+/** Find an active task by keyword search (for "done with X" style commands) */
+export async function findTaskByKeywords(userId: string, search: string): Promise<Task | null> {
+  const keywords = search.split(/\s+/).filter(w => w.length >= 2);
+  if (keywords.length === 0) return null;
+
+  let query = getSupabase()
+    .from('tasks')
+    .select('*, categories(name)')
+    .eq('user_id', userId)
+    .neq('status', 'completed')
+    .limit(10);
+
+  if (keywords.length > 1) {
+    query = query.or(keywords.map(k => `title.ilike.%${k}%`).join(','));
+  } else {
+    query = query.ilike('title', `%${keywords[0]}%`);
+  }
+
+  const { data, error } = await query;
+  if (error || !data || data.length === 0) return null;
+
+  // Score by how many keywords match (more = better)
+  const scored = data.map(task => {
+    const titleLower = task.title.toLowerCase();
+    const matches = keywords.filter(k => titleLower.includes(k.toLowerCase())).length;
+    return { task, matches };
+  });
+  scored.sort((a, b) => b.matches - a.matches);
+
+  return scored[0].task;
 }
 
 export async function markComplete(taskId: string): Promise<void> {
@@ -350,6 +453,32 @@ export async function getUpcomingReminders(userId: string) {
     .eq('is_sent', false)
     .order('reminder_time', { ascending: true })
     .limit(10);
+
+  if (error) throw error;
+  return data || [];
+}
+
+/** Get upcoming meetings (tasks in "Meetings" category with future due dates) */
+export async function getMeetings(userId: string) {
+  // Find the Meetings category
+  const { data: cat } = await getSupabase()
+    .from('categories')
+    .select('id')
+    .eq('user_id', userId)
+    .is('parent_id', null)
+    .eq('name', 'Meetings')
+    .single();
+
+  if (!cat) return [];
+
+  const { data, error } = await getSupabase()
+    .from('tasks')
+    .select('*, categories(name)')
+    .eq('user_id', userId)
+    .eq('category_id', cat.id)
+    .neq('status', 'completed')
+    .order('due_date', { ascending: true })
+    .limit(15);
 
   if (error) throw error;
   return data || [];

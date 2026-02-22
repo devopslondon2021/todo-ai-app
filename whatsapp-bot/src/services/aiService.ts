@@ -10,6 +10,9 @@ export interface ParsedTask {
   reminder_time: string | null;
   is_recurring: boolean;
   recurrence_rule: string | null;
+  is_meeting?: boolean;
+  attendees?: string[] | null;
+  duration_minutes?: number | null;
 }
 
 const SYSTEM_PROMPT = `You are a task parsing assistant. Given natural language input, extract structured task information.
@@ -35,6 +38,12 @@ Rules:
   - IMPORTANT: reminder_time must ALWAYS be in the future (after current date/time). If the parsed time would be in the past, set it to the next occurrence (e.g. next day).
 - Detect recurrence ("every day", "weekly", "every Monday") and output iCal RRULE format
 - Return all dates in ISO 8601 format (UTC)
+- MEETING DETECTION: If the input describes scheduling a meeting, call, event, or catch-up with someone:
+  - Set is_meeting to true
+  - Extract attendee names into the attendees array (e.g. "meeting with Anu and Bob" → ["Anu", "Bob"])
+  - Extract duration in minutes (default 30 if not specified)
+  - Set category to "Meetings"
+  - If not a meeting: is_meeting = false, attendees = null, duration_minutes = null
 
 Return ONLY valid JSON:
 {
@@ -46,7 +55,10 @@ Return ONLY valid JSON:
   "due_date": "ISO 8601 or null",
   "reminder_time": "ISO 8601 or null",
   "is_recurring": boolean,
-  "recurrence_rule": "RRULE string or null"
+  "recurrence_rule": "RRULE string or null",
+  "is_meeting": boolean,
+  "attendees": ["string"] or null,
+  "duration_minutes": number or null
 }`;
 
 // ─── Intent Classification ──────────────────────────────────────────
@@ -54,6 +66,8 @@ Return ONLY valid JSON:
 export type ClassifiedIntent =
   | { intent: 'add'; text: string }
   | { intent: 'remind'; text: string }
+  | { intent: 'meet'; text: string }
+  | { intent: 'done'; search: string }
   | { intent: 'query'; search: string; timeFilter?: string }
   | { intent: 'list'; timeFilter?: string }
   | { intent: 'summary' }
@@ -62,18 +76,31 @@ export type ClassifiedIntent =
 const CLASSIFY_PROMPT = `Classify the user's intent. Return JSON with one of these structures:
 - {"intent":"add","text":"task description"}
 - {"intent":"remind","text":"what to remind"}
-- {"intent":"query","search":"keyword","timeFilter":"today|this week|etc or omit"}
+- {"intent":"meet","text":"full meeting description"}
+- {"intent":"done","search":"keywords to find the task"}
+- {"intent":"query","search":"keyword1 keyword2","timeFilter":"today|tomorrow|this week|etc or omit"}
 - {"intent":"list","timeFilter":"today|this week|etc or omit"}
 - {"intent":"summary"}
 - {"intent":"unknown"}
 
 Rules:
-- "add" = user wants to create a new task
+- "add" = user wants to CREATE a new task (e.g. "add buy milk", "I need to do X")
 - "remind" = user wants a reminder
-- "query" = user is asking about specific tasks (e.g. "how many meetings today?"). Use singular search keyword for broader matching (e.g. "meetings" → "meeting")
-- "list" = user wants to see their tasks (e.g. "show my tasks")
+- "meet" = user wants to schedule a meeting, call, event, or catch-up
+- "done" = user wants to COMPLETE/finish a task (e.g. "done with dental appointment", "I finished the grocery shopping", "mark the meeting as done")
+- "query" = user is ASKING about existing tasks (checking, searching, counting)
+  - Patterns: "do I have...", "is there a task...", "what about...", "when is my...", "did I add...", "how many...", "any task for/about..."
+  - IMPORTANT: Extract 2-3 short search keywords from the subject, NOT the full question. Strip filler words.
+  - Examples:
+    "Do I have any task to take Vanya's dental appointment?" → {"intent":"query","search":"vanya dental"}
+    "Is there anything about groceries?" → {"intent":"query","search":"groceries"}
+    "When is my meeting with Harsh?" → {"intent":"query","search":"meeting harsh"}
+    "How many tasks do I have for tomorrow?" → {"intent":"query","timeFilter":"tomorrow","search":""}
+- "list" = user wants to see their tasks (e.g. "show my tasks", "what's on my list")
 - "summary" = user wants an overview/summary
 - "unknown" = can't determine intent
+
+CRITICAL: If the user is ASKING about an existing task (checking/searching), classify as "query" NOT "add".
 Return ONLY valid JSON.`;
 
 export async function classifyIntent(input: string): Promise<ClassifiedIntent> {
@@ -100,6 +127,54 @@ export async function classifyIntent(input: string): Promise<ClassifiedIntent> {
   } catch (err) {
     console.error('[AI] classifyIntent error:', err);
     return { intent: 'unknown' };
+  }
+}
+
+// ─── Multi-Task Splitting ────────────────────────────────────────────
+
+const SPLIT_PROMPT = `You split user input into individual tasks. The user may describe one or more tasks in a single message.
+
+Rules:
+- If the input contains MULTIPLE distinct tasks/actions/events, return each as a separate item
+- Preserve ALL context for each task: time, date, person names, details
+- Shared context (like "tomorrow") applies to all tasks unless overridden
+- A single task = return an array with 1 item
+- Examples:
+  Input: "I have a meeting tomorrow at 8AM and need to call Sam at 14:00 and catch the train at 5PM"
+  Output: {"tasks":["meeting tomorrow at 8AM","call Sam tomorrow at 14:00","catch the train tomorrow at 5PM"]}
+
+  Input: "buy groceries and pick up laundry"
+  Output: {"tasks":["buy groceries","pick up laundry"]}
+
+  Input: "remind me to call doctor Friday at 3pm"
+  Output: {"tasks":["remind me to call doctor Friday at 3pm"]}
+
+Return ONLY valid JSON: {"tasks":["task1","task2",...]}`;
+
+export async function splitMultiTaskInput(input: string): Promise<string[]> {
+  try {
+    const client = getAIClient();
+    const model = getModelName();
+
+    const response = await client.chat.completions.create({
+      model,
+      messages: [
+        { role: 'system', content: SPLIT_PROMPT },
+        { role: 'user', content: input },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0,
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) return [input];
+
+    const parsed = JSON.parse(content) as { tasks: string[] };
+    if (!Array.isArray(parsed.tasks) || parsed.tasks.length === 0) return [input];
+    return parsed.tasks;
+  } catch (err) {
+    console.error('[AI] splitMultiTaskInput error:', err);
+    return [input];
   }
 }
 

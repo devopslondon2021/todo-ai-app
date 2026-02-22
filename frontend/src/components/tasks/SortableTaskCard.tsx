@@ -4,14 +4,15 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 import { TaskCard } from "./TaskCard";
-import type { Task } from "@/types";
+import type { Task, Category } from "@/types";
 
 interface SortableTaskCardProps {
   task: Task;
   onUpdate: () => void;
+  categories?: Category[];
 }
 
-export function SortableTaskCard({ task, onUpdate }: SortableTaskCardProps) {
+export function SortableTaskCard({ task, onUpdate, categories }: SortableTaskCardProps) {
   const {
     attributes,
     listeners,
@@ -39,7 +40,7 @@ export function SortableTaskCard({ task, onUpdate }: SortableTaskCardProps) {
         <GripVertical size={14} />
       </button>
       <div className="flex-1 min-w-0">
-        <TaskCard task={task} onUpdate={onUpdate} />
+        <TaskCard task={task} onUpdate={onUpdate} categories={categories} />
       </div>
     </div>
   );

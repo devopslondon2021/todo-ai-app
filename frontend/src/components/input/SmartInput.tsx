@@ -21,6 +21,7 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
   const [text, setText] = useState("");
   const [isParsing, setIsParsing] = useState(false);
   const [parsedTask, setParsedTask] = useState<ParsedTask | null>(null);
+  const [parsedQueue, setParsedQueue] = useState<ParsedTask[]>([]);
   const { toast } = useToast();
   const {
     isListening,
@@ -38,7 +39,7 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
     if (!text.trim()) return;
     setIsParsing(true);
     try {
-      const res = await api<{ data: ParsedTask }>("/tasks/parse", {
+      const res = await api<{ data: ParsedTask; tasks?: ParsedTask[] }>("/tasks/parse", {
         method: "POST",
         body: {
           text: text.trim(),
@@ -46,7 +47,15 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
           category_names: categories.map((c) => c.name),
         },
       });
-      setParsedTask(res.data);
+
+      if (res.tasks && res.tasks.length > 1) {
+        // Multi-task: show first, queue the rest
+        setParsedTask(res.tasks[0]);
+        setParsedQueue(res.tasks.slice(1));
+      } else {
+        setParsedTask(res.data);
+        setParsedQueue([]);
+      }
     } catch {
       toast("Failed to parse task. Try again.", "error");
     } finally {
@@ -70,9 +79,18 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
           recurrence_rule: task.recurrence_rule,
         },
       });
-      toast("Task created!", "success");
-      setText("");
-      setParsedTask(null);
+
+      // If there are more tasks in the queue, show the next one
+      if (parsedQueue.length > 0) {
+        const [next, ...rest] = parsedQueue;
+        setParsedTask(next);
+        setParsedQueue(rest);
+        toast(`Task created! (${rest.length + 1} more to review)`, "success");
+      } else {
+        toast("Task created!", "success");
+        setText("");
+        setParsedTask(null);
+      }
       onTaskCreated();
     } catch {
       toast("Failed to create task", "error");
@@ -80,7 +98,15 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
   }
 
   function handleCancel() {
-    setParsedTask(null);
+    // If there are more tasks in the queue, show the next one
+    if (parsedQueue.length > 0) {
+      const [next, ...rest] = parsedQueue;
+      setParsedTask(next);
+      setParsedQueue(rest);
+    } else {
+      setParsedTask(null);
+      setText("");
+    }
   }
 
   return (

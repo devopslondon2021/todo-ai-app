@@ -8,6 +8,7 @@ export interface User {
   phone_number: string | null;
   name: string;
   api_key: string | null;
+  google_calendar_connected?: boolean;
   created_at: string;
 }
 
@@ -36,6 +37,7 @@ export interface Task {
   is_recurring: boolean;
   recurrence_rule: string | null;
   sort_order?: number;
+  google_event_id?: string | null;
   created_at: string;
   updated_at: string;
   categories?: Category | null;
@@ -61,6 +63,9 @@ export interface ParsedTask {
   is_recurring: boolean;
   recurrence_rule: string | null;
   user_id?: string;
+  is_meeting?: boolean;
+  attendees?: string[] | null;
+  duration_minutes?: number | null;
 }
 
 export interface TaskFilters {

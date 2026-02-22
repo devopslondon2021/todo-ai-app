@@ -3,6 +3,8 @@
 import { create } from "zustand";
 import type { TaskFilters, TaskViewMode } from "@/types";
 
+export type SortMode = "custom" | "date";
+
 interface AppState {
   filters: TaskFilters;
   setFilter: <K extends keyof TaskFilters>(key: K, value: TaskFilters[K]) => void;
@@ -16,6 +18,8 @@ interface AppState {
   setSelectedTaskId: (id: string | null) => void;
   viewMode: TaskViewMode;
   setViewMode: (mode: TaskViewMode) => void;
+  sortMode: SortMode;
+  setSortMode: (mode: SortMode) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -38,4 +42,6 @@ export const useAppStore = create<AppState>((set) => ({
   setSelectedTaskId: (id) => set({ selectedTaskId: id }),
   viewMode: "list",
   setViewMode: (mode) => set({ viewMode: mode }),
+  sortMode: "custom",
+  setSortMode: (mode) => set({ sortMode: mode }),
 }));

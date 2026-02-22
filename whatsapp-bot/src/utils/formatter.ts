@@ -15,6 +15,14 @@ interface VideoTask {
   created_at: string;
 }
 
+interface MeetingTask {
+  id: string;
+  title: string;
+  description: string | null;
+  due_date: string | null;
+  status: string;
+}
+
 interface CategoryNode {
   id: string;
   name: string;
@@ -40,9 +48,10 @@ export function formatTaskList(tasks: Task[]): string {
 
 export function formatQueryResult(tasks: Task[], search: string, timeFilter?: string): string {
   const timeLabel = timeFilter ? ` for ${timeFilter}` : '';
+  const searchLabel = search ? ` matching "${search}"` : '';
 
   if (tasks.length === 0) {
-    return `No tasks matching "${search}"${timeLabel} found.`;
+    return `No tasks${searchLabel}${timeLabel} found.`;
   }
 
   const lines = tasks.map((t, i) => {
@@ -52,7 +61,7 @@ export function formatQueryResult(tasks: Task[], search: string, timeFilter?: st
     return `${i + 1}. ${priority} *${t.title}*${cat}${due}`;
   });
 
-  return `Found ${tasks.length} task${tasks.length === 1 ? '' : 's'} matching "${search}"${timeLabel}:\n\n${lines.join('\n')}`;
+  return `Found ${tasks.length} task${tasks.length === 1 ? '' : 's'}${searchLabel}${timeLabel}:\n\n${lines.join('\n')}`;
 }
 
 export function formatVideoList(videos: VideoTask[]): string {
@@ -96,6 +105,37 @@ export function formatVideoList(videos: VideoTask[]): string {
   return `🎬 *Saved Videos*\n\n${sections.join('\n\n')}\n\n_Reply "videos done [number]" to mark as watched_`;
 }
 
+export function formatMeetingList(meetings: MeetingTask[]): string {
+  if (meetings.length === 0) {
+    return '📅 No upcoming meetings. Connect Google Calendar in Settings to sync your events.';
+  }
+
+  const lines = meetings.map((m, i) => {
+    const time = m.due_date ? formatMeetingTime(m.due_date) : 'No time set';
+    // Extract meeting link from description (first line if it's a URL)
+    const link = m.description?.startsWith('https://') ? m.description.split('\n')[0] : null;
+    const linkText = link ? `\n   🔗 ${link}` : '';
+    return `${i + 1}. 📅 *${m.title}*\n   🕐 ${time}${linkText}`;
+  });
+
+  return `📅 *Upcoming Meetings*\n\n${lines.join('\n\n')}`;
+}
+
+function formatMeetingTime(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  let dayPart: string;
+  if (d.toDateString() === now.toDateString()) dayPart = 'Today';
+  else if (d.toDateString() === tomorrow.toDateString()) dayPart = 'Tomorrow';
+  else dayPart = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+  const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return `${dayPart} at ${timePart}`;
+}
+
 export function formatHelp(callEscalationEnabled = false): string {
   let text = `*Todo AI Bot*
 
@@ -122,6 +162,11 @@ export function formatHelp(callEscalationEnabled = false): string {
 • Paste a *YouTube* or *Instagram* link to save it
 • *videos* (or *vids*) — List saved videos
 • *videos done* [number] — Mark a video as watched
+
+*Meetings:*
+• *schedule* [details] — Create a meeting (also: setup, book, meet)
+  _e.g. "schedule a meeting with Anu at 5pm tomorrow for 30mins"_
+• *meetings* (or *calendar*) — List upcoming calendar events
 
 *Other:*
 • *summary* — Daily summary (stats + today's tasks + reminders)

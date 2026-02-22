@@ -17,29 +17,35 @@ import {
 } from "@dnd-kit/sortable";
 import { TaskCard } from "./TaskCard";
 import { SortableTaskCard } from "./SortableTaskCard";
-import { ChevronDown, ChevronRight, ClipboardList, Sparkles } from "lucide-react";
-import { sortTasksCompletedLast } from "@/lib/taskSort";
+import { ArrowUpDown, Calendar, GripVertical, ChevronDown, ChevronRight, ClipboardList, Sparkles } from "lucide-react";
+import { sortTasks } from "@/lib/taskSort";
+import { useAppStore } from "@/store/useAppStore";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/Toast";
 import type { Task } from "@/types";
+
+import type { Category } from "@/types";
 
 interface TaskListProps {
   tasks: Task[];
   loading: boolean;
   onUpdate: () => void;
+  categories?: Category[];
 }
 
-export function TaskList({ tasks, loading, onUpdate }: TaskListProps) {
+export function TaskList({ tasks, loading, onUpdate, categories = [] }: TaskListProps) {
   const { toast } = useToast();
+  const { sortMode, setSortMode } = useAppStore();
   const [completedOpen, setCompletedOpen] = useState(false);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const sorted = sortTasksCompletedLast(tasks);
+  const sorted = sortTasks(tasks, sortMode);
   const activeTasks = sorted.filter((t) => t.status !== "completed");
   const completedTasks = sorted.filter((t) => t.status === "completed");
+  const isDragEnabled = sortMode === "custom";
 
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
@@ -103,21 +109,51 @@ export function TaskList({ tasks, loading, onUpdate }: TaskListProps) {
 
   return (
     <div className="space-y-1.5">
-      {/* Active tasks — draggable */}
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragEnd={handleDragEnd}
-      >
-        <SortableContext
-          items={activeTasks.map((t) => t.id)}
-          strategy={verticalListSortingStrategy}
+      {/* Sort toggle */}
+      <div className="flex items-center justify-end pb-1">
+        <button
+          onClick={() => setSortMode(sortMode === "custom" ? "date" : "custom")}
+          className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all duration-150 cursor-pointer border border-border/40 text-muted hover:text-text-secondary hover:border-border-light"
+          title={sortMode === "custom" ? "Sort by date" : "Sort by custom order"}
         >
+          {sortMode === "custom" ? (
+            <>
+              <GripVertical size={12} />
+              Custom
+            </>
+          ) : (
+            <>
+              <Calendar size={12} />
+              Date
+            </>
+          )}
+          <ArrowUpDown size={10} className="opacity-50" />
+        </button>
+      </div>
+
+      {/* Active tasks — draggable only in custom sort */}
+      {isDragEnabled ? (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={activeTasks.map((t) => t.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            {activeTasks.map((task) => (
+              <SortableTaskCard key={task.id} task={task} onUpdate={onUpdate} categories={categories} />
+            ))}
+          </SortableContext>
+        </DndContext>
+      ) : (
+        <div className="space-y-1.5">
           {activeTasks.map((task) => (
-            <SortableTaskCard key={task.id} task={task} onUpdate={onUpdate} />
+            <TaskCard key={task.id} task={task} onUpdate={onUpdate} categories={categories} />
           ))}
-        </SortableContext>
-      </DndContext>
+        </div>
+      )}
 
       {/* Completed section — collapsible */}
       {completedTasks.length > 0 && (
@@ -133,7 +169,7 @@ export function TaskList({ tasks, loading, onUpdate }: TaskListProps) {
           {completedOpen && (
             <div className="space-y-1.5 mt-1.5">
               {completedTasks.map((task) => (
-                <TaskCard key={task.id} task={task} onUpdate={onUpdate} />
+                <TaskCard key={task.id} task={task} onUpdate={onUpdate} categories={categories} />
               ))}
             </div>
           )}

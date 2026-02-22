@@ -2,13 +2,16 @@ export type Command =
   | { type: 'add'; text: string }
   | { type: 'list'; filter?: string }
   | { type: 'done'; taskNumber: number }
+  | { type: 'done_search'; search: string }
   | { type: 'delete'; taskNumber: number }
   | { type: 'remind'; text: string }
+  | { type: 'meet'; text: string }
   | { type: 'categories' }
   | { type: 'summary' }
   | { type: 'help' }
   | { type: 'video_link'; url: string; platform: 'youtube' | 'instagram' }
   | { type: 'videos'; subcommand?: 'done'; taskNumber?: number }
+  | { type: 'meetings' }
   | { type: 'unknown'; text: string };
 
 /** Extract a YouTube or Instagram video URL from text */
@@ -80,8 +83,14 @@ export function parseCommand(text: string): Command {
   }
 
   if (lower.startsWith('done ')) {
-    const num = parseInt(trimmed.slice(5).trim(), 10);
+    const rest = trimmed.slice(5).trim();
+    const num = parseInt(rest, 10);
     if (!isNaN(num)) return { type: 'done', taskNumber: num };
+    // "done with X" or "done X" — search by name
+    if (rest.length >= 2) {
+      const search = rest.replace(/^with\s+/i, '').replace(/^the\s+/i, '');
+      return { type: 'done_search', search };
+    }
   }
 
   if (lower.startsWith('delete ') || lower.startsWith('remove ')) {
@@ -95,6 +104,11 @@ export function parseCommand(text: string): Command {
     return { type: 'remind', text: trimmed.slice(prefix).trim() };
   }
 
+  // ── Meetings command ──
+  if (lower === 'meetings' || lower === 'meeting' || lower === 'calendar') {
+    return { type: 'meetings' };
+  }
+
   // ── Videos command ──
   if (lower === 'videos' || lower === 'video' || lower === 'vids') {
     return { type: 'videos' };
@@ -103,6 +117,16 @@ export function parseCommand(text: string): Command {
   const videosDoneMatch = lower.match(/^(?:videos?|vids)\s+done\s+(\d+)$/);
   if (videosDoneMatch) {
     return { type: 'videos', subcommand: 'done', taskNumber: parseInt(videosDoneMatch[1], 10) };
+  }
+
+  // ── Meeting scheduling commands ──
+  const meetMatch = lower.match(/^(?:schedule|setup|set\s+up|book|arrange)\s+(?:a\s+)?(?:meeting|call|event|catch-?up)\s+(.+)/);
+  if (meetMatch) {
+    const idx = trimmed.length - meetMatch[1].length;
+    return { type: 'meet', text: trimmed.slice(idx).trim() };
+  }
+  if (lower.startsWith('meet ')) {
+    return { type: 'meet', text: trimmed.slice(5).trim() };
   }
 
   // ── Auto-detect video links ──
