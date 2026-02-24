@@ -15,13 +15,14 @@ interface GoogleCreds {
 /** Fetch Google credentials from the user's DB row, falling back to .env */
 async function getGoogleCredentials(userId?: string): Promise<GoogleCreds | null> {
   if (userId) {
-    const { data } = await getSupabase()
+    const { data, error } = await getSupabase()
       .from('users')
       .select('google_client_id, google_client_secret')
       .eq('id', userId)
       .single();
 
-    if (data?.google_client_id && data?.google_client_secret) {
+    // If column doesn't exist (migration_v8 not run), error will be set — fall through to .env
+    if (!error && data?.google_client_id && data?.google_client_secret) {
       return { clientId: data.google_client_id, clientSecret: data.google_client_secret };
     }
   }

@@ -104,24 +104,34 @@ export async function getOrCreateUser(jid: string, pushName?: string): Promise<U
   return user;
 }
 
-/** Resolve category + subcategory names to a category_id */
+/** Resolve category + subcategory names to a category_id (auto-creates if missing) */
 export async function resolveCategoryPath(
   userId: string,
   categoryName: string | null,
   subcategoryName: string | null
 ): Promise<string | undefined> {
-  if (!categoryName) return undefined;
+  // Default to "Personal" if no category provided
+  const resolvedName = categoryName || 'Personal';
 
   // Find parent by name (root level)
-  const { data: parent } = await getSupabase()
+  let { data: parent } = await getSupabase()
     .from('categories')
     .select('id')
     .eq('user_id', userId)
     .is('parent_id', null)
-    .ilike('name', categoryName)
+    .ilike('name', resolvedName)
     .single();
 
-  if (!parent) return undefined;
+  // Auto-create the category if it doesn't exist
+  if (!parent) {
+    const { data: created } = await getSupabase()
+      .from('categories')
+      .insert({ user_id: userId, name: resolvedName })
+      .select('id')
+      .single();
+    if (!created) return undefined;
+    parent = created;
+  }
 
   if (!subcategoryName) return parent.id;
 
@@ -222,7 +232,7 @@ export async function getRecentTasks(userId: string): Promise<Task[]> {
     .order('created_at', { ascending: false })
     .limit(20);
 
-  if (videoCatIds.length > 0) query = query.not('category_id', 'in', `(${videoCatIds.join(',')})`);
+  if (videoCatIds.length > 0) query = query.or(`category_id.not.in.(${videoCatIds.join(',')}),category_id.is.null`);
 
   const { data, error } = await query;
   if (error) throw error;
@@ -285,13 +295,19 @@ export async function getTasksForWhatsApp(userId: string, filter?: string, searc
     .order('due_date', { ascending: true, nullsFirst: false })
     .limit(20);
 
-  if (videoCatIds.length > 0) query = query.not('category_id', 'in', `(${videoCatIds.join(',')})`);
+  if (videoCatIds.length > 0) query = query.or(`category_id.not.in.(${videoCatIds.join(',')}),category_id.is.null`);
 
   if (filter) {
     const f = filter.toLowerCase();
     const dateRange = parseTimeFilter(f);
 
-    if (dateRange) {
+    if (f === 'overdue') {
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+      query = query
+        .neq('status', 'completed')
+        .lt('due_date', now.toISOString());
+    } else if (dateRange) {
       query = query
         .gte('due_date', dateRange.start.toISOString())
         .lte('due_date', dateRange.end.toISOString());
@@ -302,12 +318,8 @@ export async function getTasksForWhatsApp(userId: string, filter?: string, searc
       query = query.ilike('categories.name' as any, f);
     }
   } else {
-    // Default list: exclude completed, only show today and future tasks
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    query = query
-      .neq('status', 'completed')
-      .gte('due_date', todayStart.toISOString());
+    // Default list: show all non-completed tasks (including overdue)
+    query = query.neq('status', 'completed');
   }
 
   if (search) {
@@ -431,7 +443,7 @@ export async function getTaskStats(userId: string) {
     .select('status')
     .eq('user_id', userId);
 
-  if (videoCatIds.length > 0) query = query.not('category_id', 'in', `(${videoCatIds.join(',')})`);
+  if (videoCatIds.length > 0) query = query.or(`category_id.not.in.(${videoCatIds.join(',')}),category_id.is.null`);
 
   const { data: tasks, error } = await query;
   if (error) throw error;

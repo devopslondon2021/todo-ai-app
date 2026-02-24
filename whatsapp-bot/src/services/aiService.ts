@@ -79,7 +79,7 @@ const CLASSIFY_PROMPT = `Classify the user's intent. Return JSON with one of the
 - {"intent":"meet","text":"full meeting description"}
 - {"intent":"done","search":"keywords to find the task"}
 - {"intent":"query","search":"keyword1 keyword2","timeFilter":"today|tomorrow|this week|etc or omit"}
-- {"intent":"list","timeFilter":"today|this week|etc or omit"}
+- {"intent":"list","timeFilter":"today|this week|overdue|etc or omit"}
 - {"intent":"summary"}
 - {"intent":"unknown"}
 
@@ -96,11 +96,27 @@ Rules:
     "Is there anything about groceries?" → {"intent":"query","search":"groceries"}
     "When is my meeting with Harsh?" → {"intent":"query","search":"meeting harsh"}
     "How many tasks do I have for tomorrow?" → {"intent":"query","timeFilter":"tomorrow","search":""}
-- "list" = user wants to see their tasks (e.g. "show my tasks", "what's on my list")
+    "What meetings do I have?" → {"intent":"query","search":"meeting"}
+- "list" = user wants to SEE/VIEW their tasks
+  - Single words like "List", "Tasks", "Pending", "Overdue" → list
+  - "List all X" / "Show X" / "My X" patterns → list
+  - Category-like single words ("Meetings", "Work", "Personal") → {"intent":"list","timeFilter":"<the word>"}
+  - Examples:
+    "List" → {"intent":"list"}
+    "Tasks" → {"intent":"list"}
+    "Pending" → {"intent":"list","timeFilter":"pending"}
+    "Overdue" → {"intent":"list","timeFilter":"overdue"}
+    "Meetings" → {"intent":"list","timeFilter":"meetings"}
+    "Work" → {"intent":"list","timeFilter":"work"}
+    "Show everything" → {"intent":"list"}
+    "All tasks" → {"intent":"list"}
 - "summary" = user wants an overview/summary
 - "unknown" = can't determine intent
 
-CRITICAL: If the user is ASKING about an existing task (checking/searching), classify as "query" NOT "add".
+CRITICAL RULES:
+1. If the user is ASKING about an existing task (checking/searching), classify as "query" NOT "add".
+2. When in doubt between "add" and "list", prefer "list" if the input sounds like a question or request to view.
+3. Single words that are nouns/categories (Meetings, Work, Personal, Shopping) should be "list" with timeFilter set to that word, NOT "add".
 Return ONLY valid JSON.`;
 
 export async function classifyIntent(input: string): Promise<ClassifiedIntent> {
@@ -139,6 +155,12 @@ Rules:
 - Preserve ALL context for each task: time, date, person names, details
 - Shared context (like "tomorrow") applies to all tasks unless overridden
 - A single task = return an array with 1 item
+- CRITICAL: Reminders, notifications, and modifiers about the SAME task are NOT separate tasks. Keep them together as one item:
+  - "Add X and remind me in 2 minutes" = ONE task (the reminder is about X)
+  - "Add X and also set priority high" = ONE task
+  - "Book appointment and send me a reminder" = ONE task
+  - "Add X and also add Y" = TWO tasks (genuinely different actions)
+- Only split when there are genuinely DIFFERENT actions/tasks being described
 - Examples:
   Input: "I have a meeting tomorrow at 8AM and need to call Sam at 14:00 and catch the train at 5PM"
   Output: {"tasks":["meeting tomorrow at 8AM","call Sam tomorrow at 14:00","catch the train tomorrow at 5PM"]}
@@ -148,6 +170,12 @@ Rules:
 
   Input: "remind me to call doctor Friday at 3pm"
   Output: {"tasks":["remind me to call doctor Friday at 3pm"]}
+
+  Input: "Add Vania's appointment and please send me the reminder in two minutes"
+  Output: {"tasks":["Add Vania's appointment and remind me in two minutes"]}
+
+  Input: "Book dental appointment tomorrow and remind me 30 minutes before"
+  Output: {"tasks":["Book dental appointment tomorrow and remind me 30 minutes before"]}
 
 Return ONLY valid JSON: {"tasks":["task1","task2",...]}`;
 

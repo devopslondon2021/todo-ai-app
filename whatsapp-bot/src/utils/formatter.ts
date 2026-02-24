@@ -107,7 +107,7 @@ export function formatVideoList(videos: VideoTask[]): string {
 
 export function formatMeetingList(meetings: MeetingTask[]): string {
   if (meetings.length === 0) {
-    return '📅 No upcoming meetings. Connect Google Calendar in Settings to sync your events.';
+    return '📅 No upcoming meetings.';
   }
 
   const lines = meetings.map((m, i) => {

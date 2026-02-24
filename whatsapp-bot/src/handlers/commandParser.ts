@@ -65,14 +65,42 @@ export function parseCommand(text: string): Command {
   }
 
   // ── Natural language list variants ──
-  const listNaturalMatch = lower.match(/^(?:show|get|list)\s+(?:my\s+)?(?:today'?s\s+)?tasks?$/);
+  // Single-word list shortcuts
+  if (/^(?:tasks?|pending)$/.test(lower)) {
+    const filter = lower.startsWith('pending') ? 'pending' : undefined;
+    return { type: 'list', filter };
+  }
+
+  if (/^(?:overdue)$/.test(lower)) {
+    return { type: 'list', filter: 'overdue' };
+  }
+
+  // "all tasks", "my tasks", "show all", "show all tasks", "list all", "list everything"
+  if (/^(?:all\s+tasks?|my\s+tasks?|show\s+(?:all(?:\s+tasks?)?|my\s+tasks?)|list\s+(?:all(?:\s+tasks?)?|everything)|get\s+(?:all\s+)?tasks?)$/.test(lower)) {
+    return { type: 'list' };
+  }
+
+  // "today's tasks", "today tasks", "what's for today"
+  if (/^(?:today'?s?\s+tasks?|what'?s?\s+(?:for\s+)?today)$/.test(lower)) {
+    return { type: 'list', filter: 'today' };
+  }
+
+  // "pending tasks", "overdue tasks", "completed tasks"
+  if (/^(?:pending|overdue|completed)\s+tasks?$/.test(lower)) {
+    const filter = lower.split(/\s/)[0];
+    return { type: 'list', filter };
+  }
+
+  // "show/get/list today's tasks", "show/get/list my tasks"
+  const listNaturalMatch = lower.match(/^(?:show|get|list)\s+(?:my\s+)?(?:today'?s?\s+)?tasks?$/);
   if (listNaturalMatch) {
     const filter = lower.includes('today') ? 'today' : undefined;
     return { type: 'list', filter };
   }
 
-  if (lower === 'my tasks') {
-    return { type: 'list' };
+  // "list meetings", "show meetings", "my meetings", "list all meetings"
+  if (/^(?:(?:list|show|get)\s+(?:all\s+)?meetings?|my\s+meetings?)$/.test(lower)) {
+    return { type: 'meetings' };
   }
 
   if (lower === 'list' || lower.startsWith('list ')) {

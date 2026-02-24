@@ -68,6 +68,12 @@ Rules:
 - Preserve ALL context for each task: time, date, person names, details
 - Shared context (like "tomorrow") applies to all tasks unless overridden
 - A single task = return an array with 1 item
+- CRITICAL: Reminders, notifications, and modifiers about the SAME task are NOT separate tasks. Keep them together as one item:
+  - "Add X and remind me in 2 minutes" = ONE task (the reminder is about X)
+  - "Add X and also set priority high" = ONE task
+  - "Book appointment and send me a reminder" = ONE task
+  - "Add X and also add Y" = TWO tasks (genuinely different actions)
+- Only split when there are genuinely DIFFERENT actions/tasks being described
 - Examples:
   Input: "I have a meeting tomorrow at 8AM and need to call Sam at 14:00 and catch the train at 5PM"
   Output: {"tasks":["meeting tomorrow at 8AM","call Sam tomorrow at 14:00","catch the train tomorrow at 5PM"]}
@@ -77,6 +83,12 @@ Rules:
 
   Input: "remind me to call doctor Friday at 3pm"
   Output: {"tasks":["remind me to call doctor Friday at 3pm"]}
+
+  Input: "Add Vania's appointment and please send me the reminder in two minutes"
+  Output: {"tasks":["Add Vania's appointment and remind me in two minutes"]}
+
+  Input: "Book dental appointment tomorrow and remind me 30 minutes before"
+  Output: {"tasks":["Book dental appointment tomorrow and remind me 30 minutes before"]}
 
 Return ONLY valid JSON: {"tasks":["task1","task2",...]}`;
 

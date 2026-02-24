@@ -140,6 +140,12 @@ export function TaskCard({ task, onUpdate, categories = [] }: TaskCardProps) {
     return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(date));
   }
 
+  /** True if the due_date has a meaningful time (not midnight 00:00) */
+  function hasTime(date: string) {
+    const d = new Date(date);
+    return d.getHours() !== 0 || d.getMinutes() !== 0;
+  }
+
   const isOverdue = task.due_date && isPast(new Date(task.due_date)) && !isToday(new Date(task.due_date)) && localStatus !== "completed";
   const isComplete = localStatus === "completed";
   const justToggled = isTransitioning && localStatus !== task.status;
@@ -154,9 +160,8 @@ export function TaskCard({ task, onUpdate, categories = [] }: TaskCardProps) {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
 
-  const badgeLabel = task.priority === "high" || task.priority === "medium"
-    ? priority.label.toUpperCase()
-    : task.categories?.name || null;
+  const showPriorityBadge = task.priority === "high" || task.priority === "medium";
+  const categoryName = task.categories?.name || null;
 
   return (
     <div
@@ -235,7 +240,7 @@ export function TaskCard({ task, onUpdate, categories = [] }: TaskCardProps) {
             >
               <Calendar size={10} aria-hidden="true" />
               {formatDueDate(task.due_date)}
-              {isToday(new Date(task.due_date)) && (
+              {hasTime(task.due_date) && (
                 <span className="text-text-secondary">{" \u2022 "}{formatDueTime(task.due_date)}</span>
               )}
             </span>
@@ -264,24 +269,34 @@ export function TaskCard({ task, onUpdate, categories = [] }: TaskCardProps) {
         </span>
       )}
 
-      {/* Badge */}
-      {badgeLabel && (
+      {/* Category badge */}
+      {categoryName && (
         <span
           className={cn(
-            "shrink-0 rounded-[var(--radius-sm)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+            "shrink-0 rounded-[var(--radius-sm)] px-2 py-0.5 text-[10px] font-medium tracking-wide",
             isComplete && "opacity-40",
-            task.priority === "high" || task.priority === "medium"
-              ? `${priority.bg} ${priority.text}`
-              : ""
           )}
           style={{
             transition: "opacity 300ms",
-            ...(task.priority !== "high" && task.priority !== "medium" && task.categories
-              ? { backgroundColor: task.categories.color + "18", color: task.categories.color }
-              : {}),
+            backgroundColor: (task.categories?.color || "#6b7280") + "18",
+            color: task.categories?.color || "#6b7280",
           }}
         >
-          {badgeLabel}
+          {categoryName}
+        </span>
+      )}
+
+      {/* Priority badge */}
+      {showPriorityBadge && (
+        <span
+          className={cn(
+            "shrink-0 rounded-[var(--radius-sm)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+            isComplete && "opacity-40",
+            `${priority.bg} ${priority.text}`,
+          )}
+          style={{ transition: "opacity 300ms" }}
+        >
+          {priority.label.toUpperCase()}
         </span>
       )}
 
