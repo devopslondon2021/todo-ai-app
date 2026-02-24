@@ -15,6 +15,8 @@ interface Task {
   status: string;
   due_date: string | null;
   reminder_time: string | null;
+  google_event_id?: string | null;
+  google_event_created_by_app?: boolean;
   categories?: { name: string } | null;
 }
 
@@ -188,13 +190,26 @@ export async function createTask(userId: string, parsed: ParsedTask, categoryId?
     is_recurring: parsed.is_recurring,
     recurrence_rule: parsed.recurrence_rule,
   };
-  if (googleEventId) insertData.google_event_id = googleEventId;
+  if (googleEventId) {
+    insertData.google_event_id = googleEventId;
+    insertData.google_event_created_by_app = true;
+  }
 
-  const { data: task, error } = await getSupabase()
+  let { data: task, error } = await getSupabase()
     .from('tasks')
     .insert(insertData)
     .select('*, categories(name)')
     .single();
+
+  // If google_event_created_by_app column doesn't exist yet (migration pending), retry without it
+  if (error?.code === 'PGRST204' && error.message?.includes('google_event_created_by_app')) {
+    delete insertData.google_event_created_by_app;
+    ({ data: task, error } = await getSupabase()
+      .from('tasks')
+      .insert(insertData)
+      .select('*, categories(name)')
+      .single());
+  }
 
   if (error) throw error;
 

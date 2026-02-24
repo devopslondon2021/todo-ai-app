@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getProvider, setProvider, type AIProvider } from '../config/ai';
+import { env } from '../config/env';
 
 const router = Router();
 
@@ -20,7 +21,7 @@ router.put('/', async (req, res, next) => {
     if (ai_provider === 'ollama') {
       // Test Ollama connectivity before switching
       try {
-        const ollamaUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+        const ollamaUrl = env.OLLAMA_BASE_URL;
         const response = await fetch(`${ollamaUrl}/api/tags`);
         if (!response.ok) throw new Error('Ollama not reachable');
       } catch {

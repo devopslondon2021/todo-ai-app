@@ -52,3 +52,15 @@ export async function createEvent(
   const json = (await res.json()) as { data: CreateEventResult };
   return json.data;
 }
+
+/** Delete a task (and its linked calendar event if app-created) via backend API */
+export async function deleteTaskWithCalendar(taskId: string): Promise<void> {
+  const res = await fetch(`${env.BACKEND_URL}/api/tasks/${taskId}`, {
+    method: 'DELETE',
+  });
+
+  // 204 = success, 404 = already gone
+  if (!res.ok && res.status !== 204 && res.status !== 404) {
+    throw new Error(`Backend error: ${res.status}`);
+  }
+}

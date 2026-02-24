@@ -1,5 +1,4 @@
 import makeWASocket, {
-  useMultiFileAuthState,
   makeCacheableSignalKeyStore,
   DisconnectReason,
   Browsers,
@@ -15,7 +14,7 @@ import { Boom } from '@hapi/boom';
 import NodeCache from 'node-cache';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
-import * as path from 'path';
+import { useSupabaseAuthState } from './useSupabaseAuthState.js';
 
 // Quiet logger — suppresses noisy Baileys protocol logs
 const logger = pino({ level: 'silent' });
@@ -36,7 +35,6 @@ console.warn = (...args: any[]) => {
 // Retry counter cache — tracks message retry counts to prevent infinite loops
 const msgRetryCounterCache = new NodeCache({ stdTTL: 300, useClones: false });
 
-const AUTH_DIR = path.join(process.cwd(), 'auth_info_baileys');
 
 let sock: WASocket | null = null;
 let reconnectAttempts = 0;
@@ -86,7 +84,7 @@ export async function connectWhatsApp(onMessage: MessageHandler): Promise<WASock
     sock = null;
   }
 
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  const { state, saveCreds } = await useSupabaseAuthState();
   const version = await getWAVersion();
 
   // Wrap keys in cacheable store — adds LRU cache layer that prevents
@@ -145,7 +143,7 @@ export async function connectWhatsApp(onMessage: MessageHandler): Promise<WASock
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
 
         if (statusCode === DisconnectReason.loggedOut) {
-          console.log('Logged out. Delete auth_info_baileys/ and restart.');
+          console.log('Logged out. Clear baileys_auth table and restart.');
           sock = null;
           return;
         }

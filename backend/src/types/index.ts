@@ -40,6 +40,7 @@ export interface Task {
   recurrence_rule: string | null;
   sort_order?: number;
   google_event_id?: string | null;
+  google_event_created_by_app?: boolean;
   created_at: string;
   updated_at: string;
   categories?: Category | null;

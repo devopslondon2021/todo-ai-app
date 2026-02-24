@@ -280,7 +280,7 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
           <p className="mt-2.5 text-[11px] text-muted leading-relaxed">
             {provider === "openai"
               ? "Using OpenAI GPT-4o-mini for natural language parsing. Requires API key."
-              : "Using local Ollama model. Ensure Ollama is running on localhost:11434."}
+              : "Using local Ollama model. Ensure Ollama is running and accessible."}
           </p>
         </div>
 
@@ -308,7 +308,7 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
                   &rarr; Create <strong className="text-text">OAuth client ID</strong> (Web application)
                 </li>
                 <li>
-                  Add redirect URI: <code className="text-primary bg-bg/50 px-1 py-0.5 rounded text-[10px]">http://localhost:3000/auth/google/callback</code>
+                  Add redirect URI: <code className="text-primary bg-bg/50 px-1 py-0.5 rounded text-[10px]">{typeof window !== 'undefined' ? window.location.origin : ''}/auth/google/callback</code>
                 </li>
                 <li>
                   Enable the{" "}

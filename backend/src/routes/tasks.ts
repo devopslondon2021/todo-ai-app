@@ -3,6 +3,7 @@ import * as taskService from '../services/taskService';
 import * as aiService from '../services/aiService';
 import * as categoryService from '../services/categoryService';
 import * as reminderService from '../services/reminderService';
+import * as calendarService from '../services/calendarService';
 import { apiKeyAuth } from '../middleware/apiKeyAuth';
 
 const router = Router();
@@ -219,6 +220,135 @@ router.get('/siri/today', apiKeyAuth, async (req, res, next) => {
   }
 });
 
+// POST /api/tasks/meeting — create a meeting with Google Calendar check
+router.post('/meeting', async (req, res, next) => {
+  try {
+    const { user_id, title, priority, due_date, duration_minutes, attendees, category_id, description } = req.body;
+    if (!user_id || !title) {
+      res.status(400).json({ error: 'user_id and title are required' });
+      return;
+    }
+
+    const durationMin = duration_minutes || 15;
+
+    // Resolve Meetings category if none provided
+    const resolvedCategoryId = category_id || await calendarService.getOrCreateMeetingsCategory(user_id);
+
+    // Check Google Calendar connection
+    const { connected } = await calendarService.getStatus(user_id);
+
+    let calendarEvent: { eventId: string; htmlLink: string } | null = null;
+    let conflicts: { summary: string; start: string; end: string }[] = [];
+    let alternatives: { start: string; end: string }[] = [];
+    let calendarNote: string | undefined;
+    let googleEventId: string | undefined;
+
+    if (connected && due_date) {
+      const startTime = new Date(due_date);
+      const endTime = new Date(startTime.getTime() + durationMin * 60 * 1000);
+
+      try {
+        const avail = await calendarService.checkAvailability(user_id, startTime.toISOString(), endTime.toISOString());
+
+        if (!avail.free) {
+          // Find alternative slots
+          alternatives = await findAlternativeSlots(user_id, startTime, durationMin);
+          return res.json({
+            data: null,
+            conflicts: avail.conflicts,
+            alternatives,
+            message: 'Time slot is busy',
+          });
+        }
+
+        // Slot is free — create calendar event
+        calendarEvent = await calendarService.createEvent(user_id, {
+          summary: title,
+          description,
+          start: startTime.toISOString(),
+          duration_minutes: durationMin,
+          attendee_names: attendees || undefined,
+        });
+        googleEventId = calendarEvent.eventId;
+      } catch (err: any) {
+        if (err.message === 'SCOPE_UPGRADE_NEEDED') {
+          calendarNote = 'Reconnect Google Calendar in Settings to enable event creation';
+        } else {
+          console.warn('[MEETING] Calendar flow error:', err);
+          calendarNote = 'Could not check/create calendar event';
+        }
+      }
+    } else if (!connected) {
+      calendarNote = 'Google Calendar not connected — task created without calendar event';
+    }
+
+    // Build description
+    const descParts: string[] = [];
+    if (description) descParts.push(description);
+    if (calendarEvent?.htmlLink) descParts.push(calendarEvent.htmlLink);
+    descParts.push(`Duration: ${durationMin}m`);
+    if (attendees?.length) descParts.push(`Attendees: ${attendees.join(', ')}`);
+    const fullDescription = descParts.join('\n');
+
+    const task = await taskService.createTask({
+      user_id,
+      category_id: resolvedCategoryId,
+      title,
+      description: fullDescription,
+      priority: priority || 'medium',
+      due_date,
+      google_event_id: googleEventId,
+      google_event_created_by_app: !!googleEventId,
+    });
+
+    res.status(201).json({
+      data: task,
+      calendar_event: calendarEvent,
+      conflicts: [],
+      alternatives: [],
+      calendar_note: calendarNote,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Scan forward in 30-min increments to find up to 3 free slots (business hours 8am-8pm, up to 6 hours ahead) */
+async function findAlternativeSlots(
+  userId: string,
+  requestedStart: Date,
+  durationMin: number,
+): Promise<{ start: string; end: string }[]> {
+  const slots: { start: string; end: string }[] = [];
+  const maxLookahead = 6 * 60 * 60 * 1000; // 6 hours
+  const step = 30 * 60 * 1000; // 30-min increments
+  const limit = requestedStart.getTime() + maxLookahead;
+
+  let cursor = new Date(requestedStart.getTime() + step);
+
+  while (cursor.getTime() < limit && slots.length < 3) {
+    const hour = cursor.getHours();
+    if (hour < 8 || hour >= 20) {
+      cursor = new Date(cursor.getTime() + step);
+      continue;
+    }
+
+    const slotEnd = new Date(cursor.getTime() + durationMin * 60 * 1000);
+    try {
+      const avail = await calendarService.checkAvailability(userId, cursor.toISOString(), slotEnd.toISOString());
+      if (avail.free) {
+        slots.push({ start: cursor.toISOString(), end: slotEnd.toISOString() });
+      }
+    } catch {
+      // Skip slot on error
+    }
+
+    cursor = new Date(cursor.getTime() + step);
+  }
+
+  return slots;
+}
+
 // POST /api/tasks
 router.post('/', async (req, res, next) => {
   try {
@@ -254,9 +384,20 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
-// DELETE /api/tasks/:id
+// DELETE /api/tasks/:id — also removes linked Google Calendar event (with guardrails)
 router.delete('/:id', async (req, res, next) => {
   try {
+    const task = await taskService.getTaskById(req.params.id);
+
+    // Only attempt calendar delete if task has a linked event
+    if (task?.google_event_id && task.user_id) {
+      try {
+        await calendarService.safeDeleteEvent(task.user_id, task);
+      } catch (err) {
+        console.warn('[DELETE] Calendar event removal failed (task delete continues):', err);
+      }
+    }
+
     await taskService.deleteTask(req.params.id);
     res.status(204).send();
   } catch (err) {

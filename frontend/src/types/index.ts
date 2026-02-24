@@ -38,6 +38,7 @@ export interface Task {
   recurrence_rule: string | null;
   sort_order?: number;
   google_event_id?: string | null;
+  google_event_created_by_app?: boolean;
   created_at: string;
   updated_at: string;
   categories?: Category | null;
@@ -66,6 +67,15 @@ export interface ParsedTask {
   is_meeting?: boolean;
   attendees?: string[] | null;
   duration_minutes?: number | null;
+}
+
+export interface MeetingResponse {
+  data: Task | null;
+  calendar_event?: { eventId: string; htmlLink: string } | null;
+  conflicts: { summary: string; start: string; end: string }[];
+  alternatives: { start: string; end: string }[];
+  calendar_note?: string;
+  message?: string;
 }
 
 export interface TaskFilters {

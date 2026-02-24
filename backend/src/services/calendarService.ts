@@ -1,5 +1,6 @@
 import { google, calendar_v3 } from 'googleapis';
 import { getSupabase } from '../config/supabase';
+import { env } from '../config/env';
 
 const SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
@@ -44,7 +45,7 @@ export async function isConfigured(userId?: string): Promise<boolean> {
 }
 
 function getOAuth2Client(creds: GoogleCreds) {
-  const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI || 'http://localhost:3000/auth/google/callback';
+  const redirectUri = env.GOOGLE_OAUTH_REDIRECT_URI;
   return new google.auth.OAuth2(creds.clientId, creds.clientSecret, redirectUri);
 }
 
@@ -220,7 +221,7 @@ export async function createEvent(
 ): Promise<{ eventId: string; htmlLink: string }> {
   try {
     const calendar = await getAuthenticatedCalendar(userId);
-    const durationMs = (opts.duration_minutes || 30) * 60 * 1000;
+    const durationMs = (opts.duration_minutes || 15) * 60 * 1000;
     const startDate = new Date(opts.start);
     const endDate = new Date(startDate.getTime() + durationMs);
 
@@ -247,6 +248,60 @@ export async function createEvent(
     if (err.code === 403 || err.status === 403) {
       throw new Error('SCOPE_UPGRADE_NEEDED');
     }
+    throw err;
+  }
+}
+
+/**
+ * Safely delete an event from Google Calendar.
+ * Guardrails:
+ * 1. Only deletes if the task was created by our app (google_event_created_by_app = true)
+ * 2. Skips past events (meeting already happened)
+ * 3. Verifies the event exists on Google before deleting
+ * 4. Logs every delete for audit trail
+ */
+export async function safeDeleteEvent(
+  userId: string,
+  task: { id: string; google_event_id?: string | null; google_event_created_by_app?: boolean; due_date?: string | null; title?: string },
+): Promise<{ deleted: boolean; reason?: string }> {
+  const eventId = task.google_event_id;
+  if (!eventId) return { deleted: false, reason: 'no_event_id' };
+
+  // Guard 1: Only delete events our app created, never synced events
+  // If the column doesn't exist yet (undefined), allow delete for backward compat
+  if (task.google_event_created_by_app === false) {
+    console.log(`[CALENDAR] SKIP delete — event ${eventId} was synced, not created by app (task ${task.id})`);
+    return { deleted: false, reason: 'synced_event' };
+  }
+
+  // Guard 2: Don't delete past events
+  if (task.due_date && new Date(task.due_date) < new Date()) {
+    console.log(`[CALENDAR] SKIP delete — event ${eventId} is in the past (task ${task.id})`);
+    return { deleted: false, reason: 'past_event' };
+  }
+
+  try {
+    const calendar = await getAuthenticatedCalendar(userId);
+
+    // Guard 3: Verify event exists and fetch it for audit log
+    let eventSummary: string | undefined;
+    try {
+      const existing = await calendar.events.get({ calendarId: 'primary', eventId });
+      eventSummary = existing.data.summary || undefined;
+    } catch (err: any) {
+      if (err.code === 404 || err.status === 404) {
+        return { deleted: false, reason: 'already_gone' };
+      }
+      throw err;
+    }
+
+    // Delete
+    await calendar.events.delete({ calendarId: 'primary', eventId });
+    console.log(`[CALENDAR] DELETED event "${eventSummary || eventId}" for task "${task.title || task.id}" (user ${userId})`);
+    return { deleted: true };
+  } catch (err: any) {
+    if (err.code === 410 || err.status === 410) return { deleted: false, reason: 'already_gone' };
+    if (err.code === 403 || err.status === 403) throw new Error('SCOPE_UPGRADE_NEEDED');
     throw err;
   }
 }
@@ -320,8 +375,8 @@ function getMeetingLink(event: calendar_v3.Schema$Event): string | null {
   return null;
 }
 
-/** Build description with meeting link + attendees */
-function buildDescription(event: calendar_v3.Schema$Event): string {
+/** Build description with meeting link + attendees + duration */
+function buildDescription(event: calendar_v3.Schema$Event, durationMinutes?: number | null): string {
   const parts: string[] = [];
 
   const link = getMeetingLink(event);
@@ -329,6 +384,10 @@ function buildDescription(event: calendar_v3.Schema$Event): string {
 
   if (event.location && !event.location.startsWith('http')) {
     parts.push(`Location: ${event.location}`);
+  }
+
+  if (durationMinutes && durationMinutes > 0) {
+    parts.push(`Duration: ${durationMinutes}m`);
   }
 
   const attendees = (event.attendees || [])
@@ -366,8 +425,18 @@ async function upsertEventAsTask(
   }
 
   const title = buildEventTitle(event);
-  const description = buildDescription(event);
   const dueDate = new Date(startTime).toISOString();
+
+  // Calculate duration from start/end
+  const endTime = event.end?.dateTime || event.end?.date;
+  let durationMinutes: number | null = null;
+  if (endTime) {
+    durationMinutes = Math.round((new Date(endTime).getTime() - new Date(startTime).getTime()) / 60000);
+    if (durationMinutes <= 0) durationMinutes = null;
+  }
+
+  // Build description with duration tag embedded
+  const description = buildDescription(event, durationMinutes);
 
   // Reminder 10 min before
   const reminderTime = new Date(new Date(startTime).getTime() - 10 * 60 * 1000).toISOString();
@@ -404,23 +473,36 @@ async function upsertEventAsTask(
     }
   } else {
     // Create new task
-    const { data: task, error } = await getSupabase()
+    const insertData: Record<string, any> = {
+      user_id: userId,
+      category_id: categoryId,
+      title,
+      description,
+      priority: 'medium',
+      status: 'pending',
+      due_date: dueDate,
+      reminder_time: reminderTime,
+      google_event_id: event.id,
+      google_event_created_by_app: false, // synced from Google — never delete from calendar
+    };
+
+    let { data: task, error } = await getSupabase()
       .from('tasks')
-      .insert({
-        user_id: userId,
-        category_id: categoryId,
-        title,
-        description,
-        priority: 'medium',
-        status: 'pending',
-        due_date: dueDate,
-        reminder_time: reminderTime,
-        google_event_id: event.id,
-      })
+      .insert(insertData)
       .select('id')
       .single();
 
-    if (error) {
+    // If column doesn't exist yet (migration pending), retry without it
+    if (error?.code === 'PGRST204' && error.message?.includes('google_event_created_by_app')) {
+      delete insertData.google_event_created_by_app;
+      ({ data: task, error } = await getSupabase()
+        .from('tasks')
+        .insert(insertData)
+        .select('id')
+        .single());
+    }
+
+    if (error || !task) {
       console.error(`[CALENDAR] Failed to create task for event ${event.id}:`, error);
       return;
     }

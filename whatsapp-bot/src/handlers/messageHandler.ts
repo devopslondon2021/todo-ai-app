@@ -66,7 +66,7 @@ async function processSingleTask(
 ): Promise<string> {
   // ── MEETING FLOW ──
   if (parsed.is_meeting) {
-    const durationMin = parsed.duration_minutes || 30;
+    const durationMin = parsed.duration_minutes || 15;
     parsed.category = 'Meetings';
 
     const categoryId = await taskService.resolveCategoryPath(user.id, 'Meetings', null);
@@ -299,7 +299,13 @@ async function processTextInput(
       if (!task) {
         await sendReply(sock, replyJid, `❌ Task #${command.taskNumber} not found. Use "list" to see tasks.`);
       } else {
-        await taskService.deleteTask(task.id);
+        // Delete via backend API — handles calendar cleanup with guardrails
+        try {
+          await calendarService.deleteTaskWithCalendar(task.id);
+        } catch {
+          // Fallback to direct DB delete if backend is unreachable
+          await taskService.deleteTask(task.id);
+        }
         await sendReply(sock, replyJid, `🗑️ Deleted: *${task.title}*`);
       }
       break;

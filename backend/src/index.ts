@@ -11,7 +11,7 @@ import { errorHandler } from './middleware/errorHandler';
 
 const app = express();
 
-app.use(cors({ origin: ['http://localhost:3000'] }));
+app.use(cors({ origin: env.CORS_ORIGIN.split(',') }));
 app.use(express.json());
 
 // Routes
@@ -28,6 +28,6 @@ app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 // Error handler
 app.use(errorHandler);
 
-app.listen(env.BACKEND_PORT, () => {
-  console.log(`Backend running on http://localhost:${env.BACKEND_PORT}`);
+app.listen(env.PORT, () => {
+  console.log(`Backend running on port ${env.PORT}`);
 });

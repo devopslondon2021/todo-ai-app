@@ -14,7 +14,9 @@ const envSchema = z.object({
   OLLAMA_BASE_URL: z.string().url().default('http://localhost:11434'),
   OLLAMA_MODEL: z.string().default('llama3.2'),
   AI_PROVIDER: z.enum(['openai', 'ollama']).default('openai'),
-  BACKEND_PORT: z.coerce.number().default(3001),
+  PORT: z.coerce.number().default(3001),
+  CORS_ORIGIN: z.string().default('http://localhost:3000'),
+  GOOGLE_OAUTH_REDIRECT_URI: z.string().default('http://localhost:3000/auth/google/callback'),
 });
 
 const parsed = envSchema.safeParse(process.env);

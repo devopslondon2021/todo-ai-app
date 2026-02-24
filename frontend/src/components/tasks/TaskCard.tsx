@@ -140,6 +140,20 @@ export function TaskCard({ task, onUpdate, categories = [] }: TaskCardProps) {
     return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(date));
   }
 
+  function formatDuration(minutes: number) {
+    if (minutes < 60) return `${minutes}m`;
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+
+  /** Parse "Duration: 30m" from description */
+  function parseDuration(desc: string | null): number | null {
+    if (!desc) return null;
+    const match = desc.match(/^Duration:\s*(\d+)m$/m);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
   /** True if the due_date has a meaningful time (not midnight 00:00) */
   function hasTime(date: string) {
     const d = new Date(date);
@@ -241,7 +255,10 @@ export function TaskCard({ task, onUpdate, categories = [] }: TaskCardProps) {
               <Calendar size={10} aria-hidden="true" />
               {formatDueDate(task.due_date)}
               {hasTime(task.due_date) && (
-                <span className="text-text-secondary">{" \u2022 "}{formatDueTime(task.due_date)}</span>
+                <span className="text-text-secondary">
+                  {" \u2022 "}{formatDueTime(task.due_date)}
+                  {isMeeting && parseDuration(task.description) ? ` (${formatDuration(parseDuration(task.description)!)})` : ""}
+                </span>
               )}
             </span>
           )}

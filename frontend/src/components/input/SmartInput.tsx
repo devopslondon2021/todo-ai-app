@@ -7,7 +7,8 @@ import { useVoiceInput } from "@/hooks/useVoiceInput";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/Toast";
 import { ParsePreview } from "./ParsePreview";
-import type { ParsedTask, Category, User } from "@/types";
+import { MeetingConflicts } from "./MeetingConflicts";
+import type { ParsedTask, Category, User, MeetingResponse } from "@/types";
 
 interface SmartInputProps {
   userId: string;
@@ -22,6 +23,11 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
   const [isParsing, setIsParsing] = useState(false);
   const [parsedTask, setParsedTask] = useState<ParsedTask | null>(null);
   const [parsedQueue, setParsedQueue] = useState<ParsedTask[]>([]);
+  const [meetingConflicts, setMeetingConflicts] = useState<{
+    conflicts: MeetingResponse["conflicts"];
+    alternatives: MeetingResponse["alternatives"];
+    pendingTask: ParsedTask;
+  } | null>(null);
   const { toast } = useToast();
   const {
     isListening,
@@ -63,8 +69,60 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
     }
   }
 
+  function advanceQueue() {
+    if (parsedQueue.length > 0) {
+      const [next, ...rest] = parsedQueue;
+      setParsedTask(next);
+      setParsedQueue(rest);
+    } else {
+      setText("");
+      setParsedTask(null);
+    }
+  }
+
   async function handleConfirm(task: ParsedTask) {
     try {
+      // Meeting flow: check calendar if meeting + user has calendar connected
+      if (task.is_meeting && user.google_calendar_connected) {
+        const res = await api<MeetingResponse>("/tasks/meeting", {
+          method: "POST",
+          body: {
+            user_id: userId,
+            title: task.title,
+            description: task.description,
+            priority: task.priority,
+            category_id: task.category_id,
+            due_date: task.due_date,
+            duration_minutes: task.duration_minutes || 15,
+            attendees: task.attendees,
+          },
+        });
+
+        if (!res.data) {
+          // Conflict — show alternatives
+          setMeetingConflicts({
+            conflicts: res.conflicts,
+            alternatives: res.alternatives,
+            pendingTask: task,
+          });
+          return;
+        }
+
+        // Success
+        const queueLeft = parsedQueue.length;
+        advanceQueue();
+        toast(
+          res.calendar_note
+            ? `Meeting created! ${res.calendar_note}`
+            : "Meeting created & added to Google Calendar!",
+          "success"
+        );
+        if (queueLeft > 0) toast(`${queueLeft} more to review`, "info");
+        onTaskCreated();
+        return;
+      }
+
+      // Regular task flow
       await api("/tasks", {
         method: "POST",
         body: {
@@ -80,20 +138,50 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
         },
       });
 
-      // If there are more tasks in the queue, show the next one
-      if (parsedQueue.length > 0) {
-        const [next, ...rest] = parsedQueue;
-        setParsedTask(next);
-        setParsedQueue(rest);
-        toast(`Task created! (${rest.length + 1} more to review)`, "success");
-      } else {
-        toast("Task created!", "success");
-        setText("");
-        setParsedTask(null);
-      }
+      const queueLeft = parsedQueue.length;
+      advanceQueue();
+      toast(queueLeft > 0 ? `Task created! (${queueLeft} more to review)` : "Task created!", "success");
       onTaskCreated();
     } catch {
       toast("Failed to create task", "error");
+    }
+  }
+
+  async function handlePickAlternative(slot: { start: string; end: string }) {
+    if (!meetingConflicts) return;
+    const task = meetingConflicts.pendingTask;
+    setMeetingConflicts(null);
+
+    try {
+      const res = await api<MeetingResponse>("/tasks/meeting", {
+        method: "POST",
+        body: {
+          user_id: userId,
+          title: task.title,
+          description: task.description,
+          priority: task.priority,
+          category_id: task.category_id,
+          due_date: slot.start,
+          duration_minutes: task.duration_minutes || 15,
+          attendees: task.attendees,
+        },
+      });
+
+      if (!res.data) {
+        // Still conflicting (unlikely but handle)
+        setMeetingConflicts({
+          conflicts: res.conflicts,
+          alternatives: res.alternatives,
+          pendingTask: task,
+        });
+        return;
+      }
+
+      advanceQueue();
+      toast("Meeting created & added to Google Calendar!", "success");
+      onTaskCreated();
+    } catch {
+      toast("Failed to create meeting", "error");
     }
   }
 
@@ -111,6 +199,15 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
 
   return (
     <div className="space-y-2">
+      {meetingConflicts && (
+        <MeetingConflicts
+          conflicts={meetingConflicts.conflicts}
+          alternatives={meetingConflicts.alternatives}
+          onPickAlternative={handlePickAlternative}
+          onCancel={() => setMeetingConflicts(null)}
+        />
+      )}
+
       {parsedTask && (
         <ParsePreview
           task={parsedTask}

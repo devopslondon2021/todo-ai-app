@@ -100,13 +100,26 @@ export async function regenerateApiKey(userId: string): Promise<string> {
 }
 
 export async function getOrCreateDefault(): Promise<User> {
-  // Get the first user or create a default one
-  const { data: users } = await getSupabase()
+  // Prefer the user with an active WhatsApp connection (most recently created)
+  const { data: waUser } = await getSupabase()
     .from('users')
     .select('*')
-    .limit(1);
+    .not('whatsapp_jid', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
 
-  if (users && users.length > 0) return users[0];
+  if (waUser) return waUser;
+
+  // Fallback: most recently created user
+  const { data: anyUser } = await getSupabase()
+    .from('users')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (anyUser) return anyUser;
 
   return createUser({ name: 'Default User' });
 }

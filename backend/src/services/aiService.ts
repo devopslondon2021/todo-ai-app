@@ -41,7 +41,7 @@ Rules:
 - MEETING DETECTION: If the input describes scheduling a meeting, call, event, or catch-up with someone:
   - Set is_meeting to true
   - Extract attendee names into the attendees array (e.g. "meeting with Anu and Bob" → ["Anu", "Bob"])
-  - Extract duration in minutes (default 30 if not specified)
+  - Extract duration in minutes (default 15 if not specified)
   - Set category to "Meetings"
   - If not a meeting: is_meeting = false, attendees = null, duration_minutes = null
 

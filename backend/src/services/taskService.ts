@@ -41,12 +41,24 @@ export async function createTask(taskData: {
   reminder_time?: string;
   is_recurring?: boolean;
   recurrence_rule?: string;
+  google_event_id?: string;
+  google_event_created_by_app?: boolean;
 }): Promise<Task> {
-  const { data, error } = await getSupabase()
+  let { data, error } = await getSupabase()
     .from('tasks')
     .insert(taskData)
     .select('*, categories(id, name, color, icon)')
     .single();
+
+  // If the google_event_created_by_app column doesn't exist yet (migration pending), retry without it
+  if (error?.code === 'PGRST204' && error.message?.includes('google_event_created_by_app')) {
+    const { google_event_created_by_app, ...rest } = taskData;
+    ({ data, error } = await getSupabase()
+      .from('tasks')
+      .insert(rest)
+      .select('*, categories(id, name, color, icon)')
+      .single());
+  }
 
   if (error) throw error;
 

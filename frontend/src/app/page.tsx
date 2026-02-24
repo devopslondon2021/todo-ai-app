@@ -15,6 +15,7 @@ import { useUser } from "@/hooks/useUser";
 import { useTasks } from "@/hooks/useTasks";
 import { useCategories } from "@/hooks/useCategories";
 import { useAppStore } from "@/store/useAppStore";
+import { api } from "@/lib/api";
 import { isToday as isTodayFn } from "date-fns";
 import type { Task, Category, TaskStats, User } from "@/types";
 
@@ -83,6 +84,12 @@ function Dashboard() {
   const isDemo = !userLoading && !liveUser;
   const user = liveUser || DEMO_USER;
   const effectiveUserId = userLoading || isDemo ? undefined : user.id;
+
+  // Auto-sync Google Calendar on load
+  useEffect(() => {
+    if (!user?.google_calendar_connected || user.id.startsWith('demo')) return;
+    api('/calendar/sync', { method: 'POST', body: { user_id: user.id } }).catch(() => {});
+  }, [user?.id, user?.google_calendar_connected]);
 
   // Fetch ALL tasks (unfiltered) — filter client-side so stats stay constant
   const { tasks: liveTasks, loading: tasksLoading, refetch } = useTasks(effectiveUserId);

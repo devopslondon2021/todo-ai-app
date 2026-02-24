@@ -9,6 +9,8 @@ import {
   Tag,
   AlertTriangle,
   Copy,
+  Users,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PRIORITY_CONFIG } from "@/lib/constants";
@@ -162,6 +164,26 @@ export function ParsePreview({
             <span>
               {format(new Date(edited.reminder_time), "MMM d, h:mm a")}
             </span>
+          </div>
+        )}
+
+        {edited.is_meeting && (
+          <span className="rounded bg-primary/12 px-1.5 py-px text-[9px] font-medium text-primary">
+            Meeting
+          </span>
+        )}
+
+        {edited.attendees && edited.attendees.length > 0 && (
+          <div className="flex items-center gap-1 text-muted">
+            <Users size={11} aria-hidden="true" />
+            <span>{edited.attendees.join(", ")}</span>
+          </div>
+        )}
+
+        {edited.duration_minutes && (
+          <div className="flex items-center gap-1 text-muted">
+            <Clock size={11} aria-hidden="true" />
+            <span>{edited.duration_minutes}min</span>
           </div>
         )}
       </div>

@@ -19,7 +19,7 @@ export async function transcribeVoiceMessage(
   const client = new OpenAI({ apiKey: env.OPENAI_API_KEY });
   const result = await client.audio.transcriptions.create({
     file,
-    model: 'gpt-4o-mini-transcribe',
+    model: 'gpt-4o-transcribe',
     language: 'en',
     prompt: 'Task management voice note. The user is adding, listing, or completing tasks. '
       + 'Transcribe names and proper nouns exactly as spoken.',

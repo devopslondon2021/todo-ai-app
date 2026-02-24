@@ -1,9 +1,12 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-// Load .env from monorepo root (parent of whatsapp-bot/)
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Load .env from monorepo root or current dir (Railway injects env vars directly)
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
-dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
 export const env = {
   SUPABASE_URL: process.env.SUPABASE_URL || '',
