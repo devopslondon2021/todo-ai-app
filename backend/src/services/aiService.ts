@@ -13,6 +13,7 @@ const ParsedTaskSchema = z.object({
   is_recurring: z.boolean(),
   recurrence_rule: z.string().nullable(),
   is_meeting: z.boolean().optional().default(false),
+  has_specific_time: z.boolean().optional().default(false),
   attendees: z.array(z.string()).nullable().optional().default(null),
   duration_minutes: z.number().nullable().optional().default(null),
 });
@@ -44,6 +45,7 @@ Rules:
   - Extract duration in minutes (default 15 if not specified)
   - Set category to "Meetings"
   - If not a meeting: is_meeting = false, attendees = null, duration_minutes = null
+- SPECIFIC TIME DETECTION: Set has_specific_time = true when the user mentions a specific clock time (e.g. "at 3pm", "14:00", "noon", "at midnight", "at 6 in the evening"). Set has_specific_time = false for date-only references ("tomorrow", "by Friday", "next week") or when no time is mentioned at all.
 
 Return ONLY valid JSON matching this schema:
 {
@@ -57,6 +59,7 @@ Return ONLY valid JSON matching this schema:
   "is_recurring": boolean,
   "recurrence_rule": "RRULE string or null",
   "is_meeting": boolean,
+  "has_specific_time": boolean,
   "attendees": ["string"] or null,
   "duration_minutes": number or null
 }`;

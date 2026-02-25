@@ -65,6 +65,7 @@ export interface ParsedTask {
   recurrence_rule: string | null;
   user_id?: string;
   is_meeting?: boolean;
+  has_specific_time?: boolean;
   attendees?: string[] | null;
   duration_minutes?: number | null;
 }
@@ -76,6 +77,12 @@ export interface MeetingResponse {
   alternatives: { start: string; end: string }[];
   calendar_note?: string;
   message?: string;
+}
+
+export interface AvailabilityCheckResponse {
+  free: boolean;
+  conflicts: { summary: string; start: string; end: string }[];
+  alternatives: { start: string; end: string }[];
 }
 
 export interface TaskFilters {

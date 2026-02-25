@@ -247,21 +247,37 @@ router.post('/meeting', async (req, res, next) => {
       const startTime = new Date(due_date);
       const endTime = new Date(startTime.getTime() + durationMin * 60 * 1000);
 
+      // Step 1: Check availability
+      let availResult: { free: boolean; conflicts: { summary: string; start: string; end: string }[] } | null = null;
       try {
-        const avail = await calendarService.checkAvailability(user_id, startTime.toISOString(), endTime.toISOString());
+        availResult = await calendarService.checkAvailability(user_id, startTime.toISOString(), endTime.toISOString());
+        console.log('[MEETING] Availability result:', JSON.stringify(availResult));
+      } catch (err: any) {
+        // Cannot check calendar — do NOT silently create the meeting
+        console.error('[MEETING] checkAvailability threw:', err.message);
+        const message = err.message === 'SCOPE_UPGRADE_NEEDED'
+          ? 'Reconnect Google Calendar in Settings to check availability'
+          : 'Could not check calendar availability — please try again';
+        return res.json({ data: null, conflicts: [], alternatives: [], message });
+      }
 
-        if (!avail.free) {
-          // Find alternative slots
+      // Step 2: If busy, return conflicts — never create the task
+      if (!availResult.free) {
+        try {
           alternatives = await findAlternativeSlots(user_id, startTime, durationMin);
-          return res.json({
-            data: null,
-            conflicts: avail.conflicts,
-            alternatives,
-            message: 'Time slot is busy',
-          });
+        } catch (err) {
+          console.warn('[MEETING] findAlternativeSlots error:', err);
         }
+        return res.json({
+          data: null,
+          conflicts: availResult.conflicts,
+          alternatives,
+          message: 'Time slot is busy',
+        });
+      }
 
-        // Slot is free — create calendar event
+      // Step 3: Slot is free — create calendar event
+      try {
         calendarEvent = await calendarService.createEvent(user_id, {
           summary: title,
           description,
@@ -274,8 +290,8 @@ router.post('/meeting', async (req, res, next) => {
         if (err.message === 'SCOPE_UPGRADE_NEEDED') {
           calendarNote = 'Reconnect Google Calendar in Settings to enable event creation';
         } else {
-          console.warn('[MEETING] Calendar flow error:', err);
-          calendarNote = 'Could not check/create calendar event';
+          console.warn('[MEETING] Calendar event creation error:', err);
+          calendarNote = 'Could not create calendar event';
         }
       }
     } else if (!connected) {
@@ -348,6 +364,38 @@ async function findAlternativeSlots(
 
   return slots;
 }
+
+// POST /api/tasks/check-availability — check Google Calendar for conflicts (non-blocking)
+router.post('/check-availability', async (req, res, next) => {
+  try {
+    const { user_id, due_date, duration_minutes } = req.body;
+    if (!user_id || !due_date) {
+      res.status(400).json({ error: 'user_id and due_date are required' });
+      return;
+    }
+
+    const durationMin = duration_minutes || 30;
+    const startTime = new Date(due_date);
+    const endTime = new Date(startTime.getTime() + durationMin * 60 * 1000);
+
+    try {
+      const avail = await calendarService.checkAvailability(user_id, startTime.toISOString(), endTime.toISOString());
+
+      if (!avail.free) {
+        const alternatives = await findAlternativeSlots(user_id, startTime, durationMin);
+        res.json({ free: false, conflicts: avail.conflicts, alternatives });
+        return;
+      }
+
+      res.json({ free: true, conflicts: [], alternatives: [] });
+    } catch (err) {
+      console.warn('[CHECK-AVAILABILITY] Calendar error, treating as free:', err);
+      res.json({ free: true, conflicts: [], alternatives: [] });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
 
 // POST /api/tasks
 router.post('/', async (req, res, next) => {

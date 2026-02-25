@@ -250,6 +250,50 @@ export function formatSummary(
   return lines.join('\n');
 }
 
+export function formatMorningSummary(
+  tasks: { title: string; priority: string; due_date: string | null }[],
+  meetings: { title: string; description: string | null; due_date: string | null }[]
+): string {
+  const lines: string[] = ['\u2600\uFE0F *Good Morning!*', "Here's your day at a glance:\n"];
+
+  // Tasks section
+  if (tasks.length > 0) {
+    lines.push(`\uD83D\uDCCB *Tasks (${tasks.length})*`);
+    tasks.forEach((t, i) => {
+      const priority = t.priority === 'high' ? '\uD83D\uDD34' : t.priority === 'medium' ? '\uD83D\uDFE1' : '\uD83D\uDD35';
+      const time = t.due_date ? formatTimeOnly(t.due_date) : null;
+      const timePart = time ? ` — ${time}` : '';
+      lines.push(`${i + 1}. ${priority} *${t.title}*${timePart}`);
+    });
+  } else {
+    lines.push('\uD83D\uDCCB *Tasks:* None for today');
+  }
+
+  lines.push('');
+
+  // Meetings section
+  if (meetings.length > 0) {
+    lines.push(`\uD83D\uDCC5 *Meetings (${meetings.length})*`);
+    meetings.forEach((m, i) => {
+      const time = m.due_date ? formatTimeOnly(m.due_date) : 'No time set';
+      const link = m.description?.startsWith('https://') ? m.description.split('\n')[0] : null;
+      const linkText = link ? `\n   \uD83D\uDD17 ${link}` : '';
+      lines.push(`${i + 1}. *${m.title}* — ${time}${linkText}`);
+    });
+  } else {
+    lines.push('\uD83D\uDCC5 *Meetings:* None for today');
+  }
+
+  lines.push('\nHave a productive day! \uD83D\uDCAA');
+  return lines.join('\n');
+}
+
+function formatTimeOnly(dateStr: string): string | null {
+  const d = new Date(dateStr);
+  if (d.getHours() === 0 && d.getMinutes() === 0) return null;
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
   const now = new Date();

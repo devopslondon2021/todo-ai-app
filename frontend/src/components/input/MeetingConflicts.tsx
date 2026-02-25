@@ -8,6 +8,7 @@ interface MeetingConflictsProps {
   alternatives: { start: string; end: string }[];
   onPickAlternative: (slot: { start: string; end: string }) => void;
   onCancel: () => void;
+  onCreateAnyway?: () => void;
 }
 
 export function MeetingConflicts({
@@ -15,6 +16,7 @@ export function MeetingConflicts({
   alternatives,
   onPickAlternative,
   onCancel,
+  onCreateAnyway,
 }: MeetingConflictsProps) {
   return (
     <div className="rounded-[var(--radius-md)] border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 space-y-2 animate-fade-in-up">
@@ -62,6 +64,15 @@ export function MeetingConflicts({
             ))}
           </div>
         </div>
+      )}
+
+      {onCreateAnyway && (
+        <button
+          onClick={onCreateAnyway}
+          className="text-[10px] text-muted hover:text-text transition-colors duration-150 cursor-pointer"
+        >
+          Create anyway
+        </button>
       )}
     </div>
   );

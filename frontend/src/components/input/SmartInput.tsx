@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/Toast";
 import { ParsePreview } from "./ParsePreview";
 import { MeetingConflicts } from "./MeetingConflicts";
-import type { ParsedTask, Category, User, MeetingResponse } from "@/types";
+import type { ParsedTask, Category, User, MeetingResponse, AvailabilityCheckResponse } from "@/types";
 
 interface SmartInputProps {
   userId: string;
@@ -28,6 +28,7 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
     alternatives: MeetingResponse["alternatives"];
     pendingTask: ParsedTask;
   } | null>(null);
+  const [conflictIsMeeting, setConflictIsMeeting] = useState(true);
   const { toast } = useToast();
   const {
     isListening,
@@ -99,7 +100,13 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
         });
 
         if (!res.data) {
-          // Conflict — show alternatives
+          // Calendar error (no conflicts to show) — toast the message
+          if (res.conflicts.length === 0 && res.alternatives.length === 0) {
+            toast(res.message || "Could not check calendar availability", "error");
+            return;
+          }
+          // Conflict — show alternatives (blocking for meetings)
+          setConflictIsMeeting(true);
           setMeetingConflicts({
             conflicts: res.conflicts,
             alternatives: res.alternatives,
@@ -120,6 +127,28 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
         if (queueLeft > 0) toast(`${queueLeft} more to review`, "info");
         onTaskCreated();
         return;
+      }
+
+      // Timed task flow: non-blocking availability check
+      if (!task.is_meeting && task.has_specific_time && task.due_date && user.google_calendar_connected) {
+        try {
+          const avail = await api<AvailabilityCheckResponse>("/tasks/check-availability", {
+            method: "POST",
+            body: { user_id: userId, due_date: task.due_date, duration_minutes: 30 },
+          });
+
+          if (!avail.free) {
+            setConflictIsMeeting(false);
+            setMeetingConflicts({
+              conflicts: avail.conflicts,
+              alternatives: avail.alternatives,
+              pendingTask: task,
+            });
+            return;
+          }
+        } catch {
+          // Calendar check failed — proceed with task creation
+        }
       }
 
       // Regular task flow
@@ -147,11 +176,68 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
     }
   }
 
+  async function handleCreateAnyway() {
+    if (!meetingConflicts) return;
+    const task = meetingConflicts.pendingTask;
+    setMeetingConflicts(null);
+
+    try {
+      await api("/tasks", {
+        method: "POST",
+        body: {
+          user_id: userId,
+          title: task.title,
+          description: task.description,
+          priority: task.priority,
+          category_id: task.category_id,
+          due_date: task.due_date,
+          reminder_time: task.reminder_time,
+          is_recurring: task.is_recurring,
+          recurrence_rule: task.recurrence_rule,
+        },
+      });
+
+      advanceQueue();
+      toast("Task created!", "success");
+      onTaskCreated();
+    } catch {
+      toast("Failed to create task", "error");
+    }
+  }
+
   async function handlePickAlternative(slot: { start: string; end: string }) {
     if (!meetingConflicts) return;
     const task = meetingConflicts.pendingTask;
     setMeetingConflicts(null);
 
+    // Non-meeting: create a regular task with the alternative time
+    if (!conflictIsMeeting) {
+      try {
+        await api("/tasks", {
+          method: "POST",
+          body: {
+            user_id: userId,
+            title: task.title,
+            description: task.description,
+            priority: task.priority,
+            category_id: task.category_id,
+            due_date: slot.start,
+            reminder_time: task.reminder_time,
+            is_recurring: task.is_recurring,
+            recurrence_rule: task.recurrence_rule,
+          },
+        });
+
+        advanceQueue();
+        toast("Task created!", "success");
+        onTaskCreated();
+      } catch {
+        toast("Failed to create task", "error");
+      }
+      return;
+    }
+
+    // Meeting: use the meeting endpoint
     try {
       const res = await api<MeetingResponse>("/tasks/meeting", {
         method: "POST",
@@ -168,7 +254,7 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
       });
 
       if (!res.data) {
-        // Still conflicting (unlikely but handle)
+        setConflictIsMeeting(true);
         setMeetingConflicts({
           conflicts: res.conflicts,
           alternatives: res.alternatives,
@@ -205,6 +291,7 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
           alternatives={meetingConflicts.alternatives}
           onPickAlternative={handlePickAlternative}
           onCancel={() => setMeetingConflicts(null)}
+          onCreateAnyway={!conflictIsMeeting ? handleCreateAnyway : undefined}
         />
       )}
 

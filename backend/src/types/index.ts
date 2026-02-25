@@ -67,6 +67,7 @@ export interface ParsedTask {
   is_recurring: boolean;
   recurrence_rule: string | null;
   is_meeting?: boolean;
+  has_specific_time?: boolean;
   attendees?: string[] | null;
   duration_minutes?: number | null;
 }

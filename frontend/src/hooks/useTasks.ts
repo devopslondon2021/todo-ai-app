@@ -9,6 +9,7 @@ export function useTasks(userId: string | undefined, filters: TaskFilters = {}) 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
+  const hasFetchedRef = useRef(false);
 
   const fetchTasks = useCallback(async () => {
     if (!userId) return;
@@ -18,7 +19,11 @@ export function useTasks(userId: string | undefined, filters: TaskFilters = {}) 
     const controller = new AbortController();
     abortRef.current = controller;
 
-    setLoading(true);
+    // Only show loading skeleton on initial fetch, not on refetches
+    if (!hasFetchedRef.current) {
+      setLoading(true);
+    }
+
     try {
       const res = await api<{ data: Task[] }>("/tasks", {
         params: {
@@ -33,6 +38,7 @@ export function useTasks(userId: string | undefined, filters: TaskFilters = {}) 
         signal: controller.signal,
       });
       setTasks(res.data);
+      hasFetchedRef.current = true;
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       console.error("Failed to fetch tasks:", err);
