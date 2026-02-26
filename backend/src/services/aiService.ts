@@ -25,7 +25,8 @@ Current date/time: {{CURRENT_DATETIME}}
 Available categories: {{CATEGORIES}}
 
 Rules:
-- Extract a clear, concise title
+- Extract a clear, concise title (never start with "schedule a meeting" or "add a meeting")
+- For meetings: use short, natural titles like "Meet with [Name]", "Call with [Name]", "Speak to [Name]", "[Topic] meeting" — pick the best fit based on context
 - Infer priority from urgency words (urgent/asap = high, important = medium, default = medium)
 - ALWAYS assign a category from the available categories list above. Pick the best match based on context:
   - Work-related tasks (meeting, deadline, project, office, report, email, client) → "Work"
