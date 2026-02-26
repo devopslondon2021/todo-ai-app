@@ -15,7 +15,6 @@ import {
   isSameDay,
 } from "date-fns";
 import { PRIORITY_CONFIG } from "@/lib/constants";
-import { sortTasksCompletedLast } from "@/lib/taskSort";
 import type { Task } from "@/types";
 
 interface WeeklyViewProps {
@@ -32,8 +31,8 @@ export function WeeklyView({ tasks, loading, onUpdate }: WeeklyViewProps) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
   function getTasksForDay(day: Date) {
-    return sortTasksCompletedLast(
-      tasks.filter((t) => t.due_date && isSameDay(new Date(t.due_date), day))
+    return tasks.filter(
+      (t) => t.due_date && isSameDay(new Date(t.due_date), day) && t.status !== "completed"
     );
   }
 
@@ -127,13 +126,7 @@ export function WeeklyView({ tasks, loading, onUpdate }: WeeklyViewProps) {
                         }}
                       />
                       <div className="min-w-0">
-                        <div
-                          className={cn(
-                            "font-medium text-text truncate",
-                            task.status === "completed" &&
-                              "line-through text-muted"
-                          )}
-                        >
+                        <div className="font-medium text-text truncate">
                           {task.title}
                         </div>
                         {task.categories && (

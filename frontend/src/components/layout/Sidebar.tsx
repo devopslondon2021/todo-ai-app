@@ -393,10 +393,14 @@ export function Sidebar({
             />
           )}
 
-          {categoryTree.map((cat) => (
+          {/* Meetings first, then the rest */}
+          {[
+            ...categoryTree.filter((c) => c.name === "Meetings"),
+            ...categoryTree.filter((c) => c.name !== "Meetings"),
+          ].map((cat) => (
             <CategoryItem
               key={cat.id}
-              cat={cat}
+              cat={{ ...cat, color: cat.name === "Meetings" ? "#EF4444" : cat.color }}
               activeId={activeId}
               navTo={navTo}
               userId={userId}
