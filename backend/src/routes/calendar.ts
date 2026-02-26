@@ -120,6 +120,7 @@ router.post('/check-availability', async (req: Request, res: Response) => {
 
 /** POST /api/calendar/events — create a calendar event */
 router.post('/events', async (req: Request, res: Response) => {
+  console.log('[CALENDAR] POST /events hit', { user_id: req.body?.user_id, summary: req.body?.summary });
   try {
     const { user_id, summary, description, start, duration_minutes, attendee_names } = req.body;
     if (!user_id || !summary || !start) {

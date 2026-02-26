@@ -33,6 +33,9 @@ export function startCalendarSyncScheduler(): void {
           if (!res.ok) {
             const body = await res.text().catch(() => '');
             console.warn(`[CAL-SYNC] Sync failed for user ${user.id}: ${res.status} ${body.slice(0, 100)}`);
+          } else {
+            const json = await res.json().catch(() => null) as any;
+            console.log(`[CAL-SYNC] Synced user ${user.id}: ${json?.data?.synced ?? '?'} events`);
           }
         } catch (err: any) {
           console.warn(`[CAL-SYNC] Sync error for user ${user.id}:`, err.message);

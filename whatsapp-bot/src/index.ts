@@ -18,7 +18,8 @@ async function main() {
   const { startDailySummaryScheduler } = await import('./scheduler/dailySummary.js');
   const { startCalendarSyncScheduler } = await import('./scheduler/calendarSync.js');
 
-  console.log('🚀 Starting Todo AI WhatsApp Bot...\n');
+  console.log('🚀 Starting Todo AI WhatsApp Bot...');
+  console.log(`   BACKEND_URL: ${env.BACKEND_URL}\n`);
   await connectWhatsApp(handleMessage);
   startReminderScheduler();
   startDailySummaryScheduler();

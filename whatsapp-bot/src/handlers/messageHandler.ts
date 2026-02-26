@@ -97,6 +97,8 @@ async function processSingleTask(
         } catch (err: any) {
           if (err.message === 'SCOPE_UPGRADE_NEEDED') {
             calendarNote = '⚠️ Reconnect Google Calendar in Settings to enable event creation';
+          } else {
+            console.warn('[BG] checkAvailability failed (continuing):', err.message);
           }
         }
 

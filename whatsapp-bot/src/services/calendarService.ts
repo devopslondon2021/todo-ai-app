@@ -43,12 +43,15 @@ export async function checkAvailability(
   start: string,
   end: string
 ): Promise<AvailabilityResult> {
-  const res = await backendFetch(`${env.BACKEND_URL}/api/calendar/check-availability`, {
+  const url = `${env.BACKEND_URL}/api/calendar/check-availability`;
+  console.log(`[CAL-SVC] POST ${url} (user=${userId})`);
+  const res = await backendFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user_id: userId, start, end }),
   });
 
+  console.log(`[CAL-SVC] check-availability response: ${res.status}`);
   if (res.status === 403) throw new Error('SCOPE_UPGRADE_NEEDED');
   if (!res.ok) throw new Error(await extractError(res));
 
@@ -67,14 +70,21 @@ export async function createEvent(
     attendee_names?: string[];
   }
 ): Promise<CreateEventResult> {
-  const res = await backendFetch(`${env.BACKEND_URL}/api/calendar/events`, {
+  const url = `${env.BACKEND_URL}/api/calendar/events`;
+  console.log(`[CAL-SVC] POST ${url} (user=${userId}, summary="${opts.summary}")`);
+  const res = await backendFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user_id: userId, ...opts }),
   });
 
+  console.log(`[CAL-SVC] Response: ${res.status} ${res.statusText}`);
   if (res.status === 403) throw new Error('SCOPE_UPGRADE_NEEDED');
-  if (!res.ok) throw new Error(await extractError(res));
+  if (!res.ok) {
+    const errDetail = await extractError(res);
+    console.error(`[CAL-SVC] createEvent FAILED: ${errDetail} (url=${url})`);
+    throw new Error(errDetail);
+  }
 
   const json = (await res.json()) as { data: CreateEventResult };
   return json.data;

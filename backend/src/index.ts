@@ -19,6 +19,12 @@ const app = express();
 app.use(cors({ origin: env.CORS_ORIGIN.split(',') }));
 app.use(express.json());
 
+// Log all incoming requests for debugging
+app.use((req, _res, next) => {
+  console.log(`[REQ] ${req.method} ${req.path}`);
+  next();
+});
+
 // Routes
 app.use('/api/tasks', taskRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -35,4 +41,5 @@ app.use(errorHandler);
 
 app.listen(env.PORT, () => {
   console.log(`Backend running on port ${env.PORT}`);
+  console.log(`Routes: /api/tasks, /api/categories, /api/reminders, /api/users, /api/settings, /api/calendar`);
 });
