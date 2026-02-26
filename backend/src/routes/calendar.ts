@@ -129,8 +129,9 @@ router.post('/events', async (req: Request, res: Response) => {
     if (err.message === 'SCOPE_UPGRADE_NEEDED') {
       return res.status(403).json({ error: 'SCOPE_UPGRADE_NEEDED' });
     }
-    console.error('[CALENDAR] create event error:', err);
-    res.status(500).json({ error: err.message || 'Failed to create event' });
+    const errDetail = err.response?.data?.error?.message || err.message || 'Failed to create event';
+    console.error('[CALENDAR] create event error:', errDetail, err.code || '', err.status || '');
+    res.status(500).json({ error: errDetail });
   }
 });
 

@@ -167,24 +167,28 @@ async function getAuthenticatedCalendar(userId: string) {
     expiry_date: user.google_token_expiry ? new Date(user.google_token_expiry).getTime() : undefined,
   });
 
-  oauth2Client.on('tokens', async (tokens) => {
+  oauth2Client.on('tokens', (tokens) => {
     const updates: Record<string, any> = {};
     if (tokens.access_token) updates.google_access_token = tokens.access_token;
     if (tokens.expiry_date) updates.google_token_expiry = new Date(tokens.expiry_date).toISOString();
     if (tokens.refresh_token) updates.google_refresh_token = tokens.refresh_token;
     if (Object.keys(updates).length > 0) {
-      await getSupabase().from('users').update(updates).eq('id', userId);
+      Promise.resolve(getSupabase().from('users').update(updates).eq('id', userId))
+        .then(() => console.log(`[CALENDAR] Tokens persisted for user ${userId}`))
+        .catch((err: any) => console.error(`[CALENDAR] Token persist failed:`, err.message));
     }
   });
 
-  // Force token refresh if expired or about to expire (within 60s)
+  // Force token refresh if expired or about to expire (within 5 min)
   const now = Date.now();
   const expiry = user.google_token_expiry ? new Date(user.google_token_expiry).getTime() : 0;
-  if (!expiry || expiry - now < 60_000) {
-    console.log(`[CALENDAR] Token expired/expiring for user ${userId}, forcing refresh`);
+  if (expiry && expiry - now < 5 * 60_000) {
+    console.log(`[CALENDAR] Token expiring soon for user ${userId}, forcing refresh`);
     try {
-      const { credentials } = await oauth2Client.refreshAccessToken();
-      oauth2Client.setCredentials(credentials);
+      const res = await oauth2Client.getAccessToken();
+      if (res.token) {
+        oauth2Client.setCredentials({ ...oauth2Client.credentials, access_token: res.token });
+      }
     } catch (err: any) {
       console.error(`[CALENDAR] Token refresh failed for user ${userId}:`, err.message);
       throw new Error('Google Calendar token expired — please reconnect in Settings');
