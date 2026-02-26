@@ -80,19 +80,32 @@ async function processSingleTask(
     if (calConnected && parsed.due_date) {
       try {
         const startTime = new Date(parsed.due_date);
-        const endTime = new Date(startTime.getTime() + durationMin * 60 * 1000);
 
+        // Step 1: Check availability (returns conflicts + alternative slots)
         try {
           const avail = await calendarService.checkAvailability(
-            user.id, startTime.toISOString(), endTime.toISOString()
+            user.id, startTime.toISOString(), durationMin
           );
           if (!avail.free) {
+            // Build conflict details
             conflictWarning = avail.conflicts
               .map(c => {
                 const cStart = new Date(c.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
                 const cEnd = new Date(c.end).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-                return `⚠️ Conflict: "${c.summary}" ${cStart} - ${cEnd}`;
+                return `• "${c.summary}" ${cStart} – ${cEnd}`;
               }).join('\n');
+
+            // Build suggested alternatives
+            let altText = '';
+            if (avail.alternatives?.length) {
+              const altSlots = avail.alternatives.map(s => {
+                const t = new Date(s.start);
+                return t.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+              }).join(', ');
+              altText = `\n\n💡 *Free slots nearby:* ${altSlots}`;
+            }
+
+            return `⚠️ *Time slot is busy*\n\n${conflictWarning}${altText}\n\nTry a different time or use the app to pick an alternative slot.`;
           }
         } catch (err: any) {
           if (err.message === 'SCOPE_UPGRADE_NEEDED') {
@@ -102,6 +115,7 @@ async function processSingleTask(
           }
         }
 
+        // Step 2: Create calendar event (only if slot is free)
         if (!calendarNote) {
           try {
             const event = await calendarService.createEvent(user.id, {

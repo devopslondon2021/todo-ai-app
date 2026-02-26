@@ -37,26 +37,30 @@ async function extractError(res: Response): Promise<string> {
   }
 }
 
-/** Check if a time slot is free via backend API */
+interface FullAvailabilityResult extends AvailabilityResult {
+  alternatives: { start: string; end: string }[];
+}
+
+/** Check if a time slot is free via backend API — includes alternative slots when busy */
 export async function checkAvailability(
   userId: string,
-  start: string,
-  end: string
-): Promise<AvailabilityResult> {
-  const url = `${env.BACKEND_URL}/api/calendar/check-availability`;
+  dueDate: string,
+  durationMinutes: number
+): Promise<FullAvailabilityResult> {
+  const url = `${env.BACKEND_URL}/api/tasks/check-availability`;
   console.log(`[CAL-SVC] POST ${url} (user=${userId})`);
   const res = await backendFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id: userId, start, end }),
+    body: JSON.stringify({ user_id: userId, due_date: dueDate, duration_minutes: durationMinutes }),
   });
 
   console.log(`[CAL-SVC] check-availability response: ${res.status}`);
   if (res.status === 403) throw new Error('SCOPE_UPGRADE_NEEDED');
   if (!res.ok) throw new Error(await extractError(res));
 
-  const json = (await res.json()) as { data: AvailabilityResult };
-  return json.data;
+  const json = (await res.json()) as FullAvailabilityResult;
+  return json;
 }
 
 /** Create a calendar event via backend API */

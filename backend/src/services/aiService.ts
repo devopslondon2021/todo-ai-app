@@ -150,5 +150,50 @@ export async function parseNaturalLanguage(input: string, categoryNames?: string
   if (!content) throw new Error('AI returned empty response');
 
   const parsed = JSON.parse(content);
-  return ParsedTaskSchema.parse(parsed);
+  const result = ParsedTaskSchema.parse(parsed);
+
+  // Clean up meeting titles — strip verbose prefixes the AI copies from input
+  if (result.is_meeting) {
+    result.title = cleanMeetingTitle(result.title);
+  }
+
+  return result;
+}
+
+/** Strip verbose meeting prefixes and produce a short, natural title */
+function cleanMeetingTitle(title: string): string {
+  // Strip prefixes like "schedule a meeting to...", "add a call with..."
+  // Keep "about/regarding/for" — only strip "to" and "with" as they flow into natural titles
+  let cleaned = title.replace(
+    /^(?:schedule|set\s*up|book|arrange|add|create|plan)\s+(?:a\s+)?(?:meeting|call|event|catch-?up|sync)\s+/i,
+    ''
+  ).trim();
+
+  if (!cleaned || cleaned === title) return title;
+
+  // "with John" → "Meet with John", "to speak to X" → "Speak to X"
+  // "about X" → "Meeting about X", "regarding X" → "Meeting regarding X", "for X" → "Meeting for X"
+  if (/^(?:about|regarding|for)\s+/i.test(cleaned)) {
+    return `Meeting ${cleaned}`;
+  }
+
+  if (/^(?:with)\s+/i.test(cleaned)) {
+    return `Meet ${cleaned}`;
+  }
+
+  if (/^to\s+/i.test(cleaned)) {
+    // "to speak to Aakash" → "Speak to Aakash"
+    cleaned = cleaned.slice(3).trim();
+    if (!cleaned) return title;
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+
+  // Capitalize and check if it starts with a verb
+  cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  const startsWithVerb = /^(?:speak|talk|discuss|review|catch|sync|meet|call|check|go\s+over|plan|prep)/i.test(cleaned);
+  if (!startsWithVerb) {
+    cleaned = `Meet with ${cleaned}`;
+  }
+
+  return cleaned;
 }
