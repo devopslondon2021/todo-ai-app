@@ -112,16 +112,17 @@ async function processSingleTask(
             const errMsg = err.message || String(err);
             console.error('[BG] Calendar event creation FAILED:', errMsg);
             if (errMsg === 'SCOPE_UPGRADE_NEEDED') {
-              calendarNote = '⚠️ Reconnect Google Calendar in Settings to enable event creation';
+              return '❌ Could not create meeting — reconnect Google Calendar in Settings';
             } else if (errMsg.includes('token expired') || errMsg.includes('Token')) {
-              calendarNote = '⚠️ Google Calendar token expired — reconnect in Settings';
+              return '❌ Could not create meeting — Google Calendar token expired. Reconnect in Settings';
             } else {
-              calendarNote = `⚠️ Calendar sync failed: ${errMsg.slice(0, 80)}`;
+              return `❌ Could not create meeting — calendar error: ${errMsg.slice(0, 80)}\n\nPlease try again.`;
             }
           }
         }
       } catch (err) {
         console.warn('[BG] Calendar flow error:', err);
+        return '❌ Could not create meeting — calendar error. Please try again.';
       }
     } else if (!calConnected) {
       calendarNote = '💡 Connect Google Calendar in Settings to auto-sync';

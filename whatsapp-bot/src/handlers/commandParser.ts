@@ -60,6 +60,13 @@ export function parseCommand(text: string): Command {
     return { type: 'add', text: trimmed.slice(idx).trim() };
   }
 
+  // "add meeting ...", "add a meeting ...", "add a call ..." → meeting flow
+  const addMeetMatch = lower.match(/^add\s+(?:a\s+)?(?:meeting|call|event|catch-?up)\s+(.+)/);
+  if (addMeetMatch) {
+    const idx = trimmed.length - addMeetMatch[1].length;
+    return { type: 'meet', text: trimmed.slice(idx).trim() };
+  }
+
   if (lower.startsWith('add ')) {
     return { type: 'add', text: trimmed.slice(4).trim() };
   }
