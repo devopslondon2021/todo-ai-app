@@ -22,7 +22,10 @@ async function getGoogleCredentials(userId?: string): Promise<GoogleCreds | null
       .eq('id', userId)
       .single();
 
-    // If column doesn't exist (migration_v8 not run), error will be set — fall through to .env
+    if (error) {
+      console.warn(`[CALENDAR] getGoogleCredentials DB error for user ${userId}:`, error.message, error.code);
+    }
+
     if (!error && data?.google_client_id && data?.google_client_secret) {
       return { clientId: data.google_client_id, clientSecret: data.google_client_secret };
     }
@@ -35,6 +38,7 @@ async function getGoogleCredentials(userId?: string): Promise<GoogleCreds | null
     return { clientId: envId, clientSecret: envSecret };
   }
 
+  console.error(`[CALENDAR] NOT_CONFIGURED — no credentials in DB (user=${userId}) or env vars (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)`);
   return null;
 }
 

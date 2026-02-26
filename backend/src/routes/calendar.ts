@@ -3,6 +3,26 @@ import * as calendarService from '../services/calendarService';
 
 const router = Router();
 
+/** Map known error messages to proper HTTP status codes */
+function calendarErrorResponse(res: Response, err: any): void {
+  const msg = err.message || 'Calendar operation failed';
+  if (msg === 'NOT_CONFIGURED') {
+    res.status(503).json({ error: 'Google Calendar credentials not configured — add GOOGLE_CLIENT_ID & GOOGLE_CLIENT_SECRET env vars or save credentials in Settings' });
+    return;
+  }
+  if (msg === 'SCOPE_UPGRADE_NEEDED') {
+    res.status(403).json({ error: 'SCOPE_UPGRADE_NEEDED' });
+    return;
+  }
+  if (msg === 'Google Calendar not connected') {
+    res.status(400).json({ error: msg });
+    return;
+  }
+  const detail = err.response?.data?.error?.message || msg;
+  console.error('[CALENDAR] error:', detail, err.code || '', err.status || '');
+  res.status(500).json({ error: detail });
+}
+
 /** POST /api/calendar/credentials — save Google OAuth client ID + secret to DB */
 router.post('/credentials', async (req: Request, res: Response) => {
   try {
@@ -33,11 +53,7 @@ router.get('/auth-url', async (req: Request, res: Response) => {
     const url = await calendarService.getAuthUrl(userId);
     res.json({ data: { url } });
   } catch (err: any) {
-    if (err.message === 'NOT_CONFIGURED') {
-      return res.status(503).json({ error: 'NOT_CONFIGURED' });
-    }
-    console.error('[CALENDAR] auth-url error:', err);
-    res.status(500).json({ error: err.message || 'Failed to generate auth URL' });
+    calendarErrorResponse(res, err);
   }
 });
 
@@ -52,8 +68,7 @@ router.post('/connect', async (req: Request, res: Response) => {
     await calendarService.handleCallback(code, user_id);
     res.json({ data: { connected: true } });
   } catch (err: any) {
-    console.error('[CALENDAR] connect error:', err);
-    res.status(500).json({ error: err.message || 'Failed to connect Google Calendar' });
+    calendarErrorResponse(res, err);
   }
 });
 
@@ -66,8 +81,7 @@ router.post('/sync', async (req: Request, res: Response) => {
     const result = await calendarService.syncCalendar(user_id);
     res.json({ data: result });
   } catch (err: any) {
-    console.error('[CALENDAR] sync error:', err);
-    res.status(500).json({ error: err.message || 'Failed to sync calendar' });
+    calendarErrorResponse(res, err);
   }
 });
 
@@ -85,8 +99,7 @@ router.get('/status', async (req: Request, res: Response) => {
     const status = await calendarService.getStatus(userId);
     res.json({ data: { ...status, configured: true } });
   } catch (err: any) {
-    console.error('[CALENDAR] status error:', err);
-    res.status(500).json({ error: err.message || 'Failed to get status' });
+    calendarErrorResponse(res, err);
   }
 });
 
@@ -101,11 +114,7 @@ router.post('/check-availability', async (req: Request, res: Response) => {
     const result = await calendarService.checkAvailability(user_id, start, end);
     res.json({ data: result });
   } catch (err: any) {
-    if (err.message === 'SCOPE_UPGRADE_NEEDED') {
-      return res.status(403).json({ error: 'SCOPE_UPGRADE_NEEDED' });
-    }
-    console.error('[CALENDAR] check-availability error:', err);
-    res.status(500).json({ error: err.message || 'Failed to check availability' });
+    calendarErrorResponse(res, err);
   }
 });
 
@@ -126,12 +135,7 @@ router.post('/events', async (req: Request, res: Response) => {
     });
     res.json({ data: result });
   } catch (err: any) {
-    if (err.message === 'SCOPE_UPGRADE_NEEDED') {
-      return res.status(403).json({ error: 'SCOPE_UPGRADE_NEEDED' });
-    }
-    const errDetail = err.response?.data?.error?.message || err.message || 'Failed to create event';
-    console.error('[CALENDAR] create event error:', errDetail, err.code || '', err.status || '');
-    res.status(500).json({ error: errDetail });
+    calendarErrorResponse(res, err);
   }
 });
 
@@ -169,8 +173,7 @@ router.delete('/disconnect', async (req: Request, res: Response) => {
     await calendarService.disconnect(userId);
     res.json({ data: { connected: false } });
   } catch (err: any) {
-    console.error('[CALENDAR] disconnect error:', err);
-    res.status(500).json({ error: err.message || 'Failed to disconnect' });
+    calendarErrorResponse(res, err);
   }
 });
 
