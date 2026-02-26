@@ -81,8 +81,11 @@ export async function handleCallback(code: string, userId: string): Promise<void
     })
     .eq('id', userId);
 
-  // Initial sync
+  // Initial sync + register push notifications
   await syncCalendar(userId);
+  await watchCalendar(userId).catch(err =>
+    console.warn('[CALENDAR] Post-connect watch registration failed:', err.message)
+  );
 }
 
 /** Check if a user has Google Calendar connected */
@@ -96,8 +99,11 @@ export async function getStatus(userId: string): Promise<{ connected: boolean }>
   return { connected: !!data?.google_calendar_connected };
 }
 
-/** Disconnect Google Calendar — clear tokens */
+/** Disconnect Google Calendar — clear tokens and stop watch */
 export async function disconnect(userId: string): Promise<void> {
+  // Stop watch channel before revoking tokens
+  await stopWatch(userId).catch(() => {});
+
   // Try to revoke the token
   try {
     const { data: user } = await getSupabase()
@@ -170,6 +176,20 @@ async function getAuthenticatedCalendar(userId: string) {
       await getSupabase().from('users').update(updates).eq('id', userId);
     }
   });
+
+  // Force token refresh if expired or about to expire (within 60s)
+  const now = Date.now();
+  const expiry = user.google_token_expiry ? new Date(user.google_token_expiry).getTime() : 0;
+  if (!expiry || expiry - now < 60_000) {
+    console.log(`[CALENDAR] Token expired/expiring for user ${userId}, forcing refresh`);
+    try {
+      const { credentials } = await oauth2Client.refreshAccessToken();
+      oauth2Client.setCredentials(credentials);
+    } catch (err: any) {
+      console.error(`[CALENDAR] Token refresh failed for user ${userId}:`, err.message);
+      throw new Error('Google Calendar token expired — please reconnect in Settings');
+    }
+  }
 
   return google.calendar({ version: 'v3', auth: oauth2Client });
 }
@@ -248,6 +268,42 @@ export async function createEvent(
     if (err.code === 403 || err.status === 403) {
       throw new Error('SCOPE_UPGRADE_NEEDED');
     }
+    throw err;
+  }
+}
+
+/** Update an existing Google Calendar event (title/time changes) */
+export async function updateEvent(
+  userId: string,
+  eventId: string,
+  updates: { summary?: string; start?: string; duration_minutes?: number },
+): Promise<void> {
+  try {
+    const calendar = await getAuthenticatedCalendar(userId);
+    const patch: Record<string, any> = {};
+
+    if (updates.summary) patch.summary = updates.summary;
+    if (updates.start) {
+      const startDate = new Date(updates.start);
+      patch.start = { dateTime: startDate.toISOString() };
+      const durationMs = (updates.duration_minutes || 15) * 60 * 1000;
+      patch.end = { dateTime: new Date(startDate.getTime() + durationMs).toISOString() };
+    }
+
+    if (Object.keys(patch).length === 0) return;
+
+    await calendar.events.patch({
+      calendarId: 'primary',
+      eventId,
+      requestBody: patch,
+    });
+    console.log(`[CALENDAR] Updated event ${eventId} for user ${userId}`);
+  } catch (err: any) {
+    if (err.code === 404 || err.status === 404) {
+      console.warn(`[CALENDAR] Event ${eventId} not found — skipping update`);
+      return;
+    }
+    if (err.code === 403 || err.status === 403) throw new Error('SCOPE_UPGRADE_NEEDED');
     throw err;
   }
 }
@@ -570,4 +626,111 @@ export async function syncCalendar(userId: string): Promise<{ synced: number }> 
 
   console.log(`[CALENDAR] Synced ${events.length} events for user ${userId}`);
   return { synced: events.length };
+}
+
+/** Register a Google Calendar push notification watch channel for a user */
+export async function watchCalendar(userId: string): Promise<void> {
+  const webhookUrl = getWebhookUrl();
+  if (!webhookUrl) {
+    console.warn('[CALENDAR] GOOGLE_WEBHOOK_URL not set — skipping watch registration');
+    return;
+  }
+
+  const calendar = await getAuthenticatedCalendar(userId);
+  const channelId = `todo-ai-${userId}-${Date.now()}`;
+  const expiration = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days
+
+  try {
+    const res = await calendar.events.watch({
+      calendarId: 'primary',
+      requestBody: {
+        id: channelId,
+        type: 'web_hook',
+        address: webhookUrl,
+        expiration: expiration.toString(),
+        params: { ttl: '604800' }, // 7 days in seconds
+      },
+    });
+
+    await getSupabase()
+      .from('users')
+      .update({
+        google_watch_channel_id: channelId,
+        google_watch_resource_id: res.data.resourceId || null,
+        google_watch_expiry: new Date(expiration).toISOString(),
+      })
+      .eq('id', userId);
+
+    console.log(`[CALENDAR] Watch registered for user ${userId}, channel=${channelId}`);
+  } catch (err: any) {
+    // Non-fatal — polling cron will still work
+    console.warn(`[CALENDAR] Watch registration failed for user ${userId}:`, err.message);
+  }
+}
+
+/** Stop an existing watch channel */
+export async function stopWatch(userId: string): Promise<void> {
+  const { data: user } = await getSupabase()
+    .from('users')
+    .select('google_watch_channel_id, google_watch_resource_id')
+    .eq('id', userId)
+    .single();
+
+  if (!user?.google_watch_channel_id || !user?.google_watch_resource_id) return;
+
+  try {
+    const calendar = await getAuthenticatedCalendar(userId);
+    await calendar.channels.stop({
+      requestBody: {
+        id: user.google_watch_channel_id,
+        resourceId: user.google_watch_resource_id,
+      },
+    });
+    console.log(`[CALENDAR] Watch stopped for user ${userId}`);
+  } catch (err: any) {
+    console.warn(`[CALENDAR] stopWatch error for user ${userId}:`, err.message);
+  }
+
+  await getSupabase()
+    .from('users')
+    .update({ google_watch_channel_id: null, google_watch_resource_id: null, google_watch_expiry: null })
+    .eq('id', userId);
+}
+
+/** Renew watch channels that are expiring within the next 24 hours */
+export async function renewWatches(): Promise<void> {
+  const cutoff = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: users } = await getSupabase()
+    .from('users')
+    .select('id')
+    .eq('google_calendar_connected', true)
+    .not('google_watch_channel_id', 'is', null)
+    .lte('google_watch_expiry', cutoff);
+
+  if (!users?.length) return;
+
+  console.log(`[CALENDAR] Renewing ${users.length} expiring watch channel(s)`);
+  for (const user of users) {
+    await stopWatch(user.id);
+    await watchCalendar(user.id);
+    // Stagger to avoid rate limits
+    await new Promise(r => setTimeout(r, 500));
+  }
+}
+
+/** Find user by their watch channel ID (for webhook processing) */
+export async function findUserByWatchChannel(channelId: string): Promise<string | null> {
+  const { data } = await getSupabase()
+    .from('users')
+    .select('id')
+    .eq('google_watch_channel_id', channelId)
+    .single();
+
+  return data?.id || null;
+}
+
+/** Get the webhook URL from env */
+function getWebhookUrl(): string | null {
+  return process.env.GOOGLE_WEBHOOK_URL || null;
 }

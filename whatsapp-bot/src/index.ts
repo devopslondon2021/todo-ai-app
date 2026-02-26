@@ -16,11 +16,13 @@ async function main() {
   const { handleMessage } = await import('./handlers/messageHandler.js');
   const { startReminderScheduler } = await import('./scheduler/reminderCron.js');
   const { startDailySummaryScheduler } = await import('./scheduler/dailySummary.js');
+  const { startCalendarSyncScheduler } = await import('./scheduler/calendarSync.js');
 
   console.log('🚀 Starting Todo AI WhatsApp Bot...\n');
   await connectWhatsApp(handleMessage);
   startReminderScheduler();
   startDailySummaryScheduler();
+  startCalendarSyncScheduler();
 }
 
 main().catch((err) => {

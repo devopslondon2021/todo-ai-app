@@ -134,6 +134,31 @@ router.post('/events', async (req: Request, res: Response) => {
   }
 });
 
+/** POST /api/calendar/webhook — receive Google Calendar push notifications */
+router.post('/webhook', async (req: Request, res: Response) => {
+  // Google sends a sync message on channel creation — respond 200 immediately
+  const channelId = req.headers['x-goog-channel-id'] as string;
+  const resourceState = req.headers['x-goog-resource-state'] as string;
+
+  // Always respond 200 quickly to avoid Google retries
+  res.status(200).send('OK');
+
+  if (!channelId || resourceState === 'sync') return;
+
+  try {
+    const userId = await calendarService.findUserByWatchChannel(channelId);
+    if (!userId) {
+      console.warn(`[WEBHOOK] Unknown channel ${channelId}`);
+      return;
+    }
+
+    console.log(`[WEBHOOK] Calendar change for user ${userId} (state=${resourceState})`);
+    await calendarService.syncCalendar(userId);
+  } catch (err: any) {
+    console.error('[WEBHOOK] Sync error:', err.message);
+  }
+});
+
 /** DELETE /api/calendar/disconnect — remove Google Calendar connection */
 router.delete('/disconnect', async (req: Request, res: Response) => {
   try {

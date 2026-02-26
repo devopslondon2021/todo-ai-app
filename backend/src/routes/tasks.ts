@@ -77,9 +77,10 @@ router.post('/parse', async (req, res, next) => {
     // Resolve categories, defaults, and duplicates for each
     const results = await Promise.all(
       parsedAll.map(async (parsed) => {
-        const category_id = await categoryService.resolveCategoryPath(
-          user_id, parsed.category, parsed.subcategory
-        );
+        // For meetings, ensure "Meetings" category exists (auto-create if needed)
+        const category_id = parsed.is_meeting
+          ? await calendarService.getOrCreateMeetingsCategory(user_id)
+          : await categoryService.resolveCategoryPath(user_id, parsed.category, parsed.subcategory);
 
         let due_date = parsed.due_date;
         let due_date_is_default = false;
@@ -287,12 +288,18 @@ router.post('/meeting', async (req, res, next) => {
         });
         googleEventId = calendarEvent.eventId;
       } catch (err: any) {
-        if (err.message === 'SCOPE_UPGRADE_NEEDED') {
-          calendarNote = 'Reconnect Google Calendar in Settings to enable event creation';
-        } else {
-          console.warn('[MEETING] Calendar event creation error:', err);
-          calendarNote = 'Could not create calendar event';
+        const errMsg = err.message || String(err);
+        console.error('[MEETING] Calendar event creation FAILED:', errMsg);
+        if (errMsg === 'SCOPE_UPGRADE_NEEDED') {
+          return res.json({
+            data: null, conflicts: [], alternatives: [],
+            message: 'Reconnect Google Calendar in Settings to enable event creation',
+          });
         }
+        return res.json({
+          data: null, conflicts: [], alternatives: [],
+          message: `Could not create calendar event: ${errMsg}`,
+        });
       }
     } else if (!connected) {
       calendarNote = 'Google Calendar not connected — task created without calendar event';
@@ -425,7 +432,30 @@ router.patch('/reorder', async (req, res, next) => {
 // PATCH /api/tasks/:id
 router.patch('/:id', async (req, res, next) => {
   try {
+    // Fetch the existing task to check for calendar sync needs
+    const existing = await taskService.getTaskById(req.params.id);
     const task = await taskService.updateTask(req.params.id, req.body);
+
+    // Propagate title/time changes to Google Calendar
+    if (existing?.google_event_id && existing.user_id) {
+      const titleChanged = req.body.title && req.body.title !== existing.title;
+      const dateChanged = req.body.due_date && req.body.due_date !== existing.due_date;
+      if (titleChanged || dateChanged) {
+        try {
+          // Extract duration from description (e.g. "Duration: 30m")
+          const durationMatch = existing.description?.match(/Duration:\s*(\d+)m/);
+          const durationMin = durationMatch ? parseInt(durationMatch[1], 10) : 15;
+          await calendarService.updateEvent(existing.user_id, existing.google_event_id, {
+            summary: req.body.title || existing.title,
+            start: req.body.due_date || existing.due_date,
+            duration_minutes: durationMin,
+          });
+        } catch (err) {
+          console.warn('[PATCH] Calendar event update failed (task updated anyway):', err);
+        }
+      }
+    }
+
     res.json({ data: task });
   } catch (err) {
     next(err);

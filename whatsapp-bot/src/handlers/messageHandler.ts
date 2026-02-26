@@ -109,11 +109,14 @@ async function processSingleTask(
             googleEventId = event.eventId;
             calendarNote = '📅 Added to Google Calendar';
           } catch (err: any) {
-            if (err.message === 'SCOPE_UPGRADE_NEEDED') {
+            const errMsg = err.message || String(err);
+            console.error('[BG] Calendar event creation FAILED:', errMsg);
+            if (errMsg === 'SCOPE_UPGRADE_NEEDED') {
               calendarNote = '⚠️ Reconnect Google Calendar in Settings to enable event creation';
+            } else if (errMsg.includes('token expired') || errMsg.includes('Token')) {
+              calendarNote = '⚠️ Google Calendar token expired — reconnect in Settings';
             } else {
-              console.warn('[BG] Calendar event creation failed:', err);
-              calendarNote = '⚠️ Could not add to Google Calendar';
+              calendarNote = `⚠️ Calendar sync failed: ${errMsg.slice(0, 80)}`;
             }
           }
         }
