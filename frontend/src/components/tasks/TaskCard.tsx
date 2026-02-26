@@ -68,6 +68,10 @@ export function TaskCard({ task, onUpdate, categories = [] }: TaskCardProps) {
   if (task.status !== localStatus && !isTransitioning) {
     setLocalStatus(task.status);
   }
+  // Clear transition once server confirms the change
+  if (isTransitioning && task.status === localStatus) {
+    setIsTransitioning(false);
+  }
 
   // Escape key handler for dropdown menu
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -96,7 +100,6 @@ export function TaskCard({ task, onUpdate, categories = [] }: TaskCardProps) {
         body: { status: newStatus },
       });
       setTimeout(() => {
-        setIsTransitioning(false);
         onUpdate();
       }, 350);
     } catch {
