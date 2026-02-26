@@ -324,13 +324,16 @@ export async function getTasksForWhatsApp(userId: string, filter?: string, searc
         .lt('due_date', now.toISOString());
     } else if (dateRange) {
       query = query
+        .neq('status', 'completed')
         .gte('due_date', dateRange.start.toISOString())
         .lte('due_date', dateRange.end.toISOString());
     } else if (['pending', 'in_progress', 'completed'].includes(f)) {
       query = query.eq('status', f);
     } else {
       // Try as category name
-      query = query.ilike('categories.name' as any, f);
+      query = query
+        .neq('status', 'completed')
+        .ilike('categories.name' as any, f);
     }
   } else {
     // Default list: show all non-completed tasks (including overdue)
