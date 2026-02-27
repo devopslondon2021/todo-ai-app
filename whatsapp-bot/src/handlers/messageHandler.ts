@@ -267,7 +267,7 @@ async function processTextInput(
     case 'meet': {
       if (!ackSent) await sendReply(sock, replyJid, '⏳ Scheduling meeting...');
       categories = await taskService.getCategories(user.id);
-      processAddInBackground(sock, replyJid, jid, `schedule a meeting ${command.text}`, user, categories);
+      processAddInBackground(sock, replyJid, jid, `meeting ${command.text}`, user, categories);
       return;
     }
 

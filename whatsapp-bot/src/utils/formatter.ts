@@ -254,7 +254,7 @@ export function formatMorningSummary(
   tasks: { title: string; priority: string; due_date: string | null }[],
   meetings: { title: string; description: string | null; due_date: string | null }[]
 ): string {
-  const lines: string[] = ['\u2600\uFE0F *Good Morning!*', "Here's your day at a glance:\n"];
+  const lines: string[] = ['\u2600\uFE0F *Good Morning, Prashant!*', "Here's your day at a glance:\n"];
 
   // Tasks section
   if (tasks.length > 0) {

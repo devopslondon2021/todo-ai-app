@@ -25,8 +25,10 @@ Current date/time: {{CURRENT_DATETIME}}
 Available categories: {{CATEGORIES}}
 
 Rules:
-- Extract a clear, concise title (never start with "schedule a meeting" or "add a meeting")
-- For meetings: use short, natural titles like "Meet with [Name]", "Call with [Name]", "Speak to [Name]", "[Topic] meeting" — pick the best fit based on context
+- TITLE RULES: The title is an EVENT NAME, not a command. Never include action verbs like "schedule", "add", "set up", "book", "create", or "plan" in the title.
+- For meetings: use short, natural titles like "Meeting with [Name]", "Call with [Name]", "[Topic] Meeting"
+- BAD titles: "Schedule a meeting to speak to Akshay", "Add a call to discuss project", "Set up meeting with Bob"
+- GOOD titles: "Meeting with Akshay", "Project Discussion", "Call with Bob"
 - Infer priority from urgency words (urgent/asap = high, important = medium, default = medium)
 - ALWAYS assign a category from the available categories list above. Pick the best match based on context:
   - Work-related tasks (meeting, deadline, project, office, report, email, client) → "Work"
@@ -165,7 +167,7 @@ function cleanMeetingTitle(title: string): string {
   // Strip prefixes like "schedule a meeting to...", "add a call with..."
   // Keep "about/regarding/for" — only strip "to" and "with" as they flow into natural titles
   let cleaned = title.replace(
-    /^(?:schedule|set\s*up|book|arrange|add|create|plan)\s+(?:a\s+)?(?:meeting|call|event|catch-?up|sync)\s+/i,
+    /^(?:schedule|set\s*up|book|arrange|add|create|plan|have)\s+(?:a\s+)?(?:meeting|call|event|catch-?up|sync)\s+/i,
     ''
   ).trim();
 

@@ -23,6 +23,10 @@ Available categories: {{CATEGORIES}}
 
 Rules:
 - Extract a clear, concise title (strip "remind me to" prefix from title)
+- TITLE RULES: The title is an EVENT NAME, not a command. Never include action verbs like "schedule", "add", "set up", "book", "create", or "plan" in the title.
+- For meetings: use short, natural titles like "Meeting with [Name]", "Call with [Name]", "[Topic] Meeting"
+- BAD titles: "Schedule a meeting to speak to Akshay", "Add a call to discuss project", "Set up meeting with Bob"
+- GOOD titles: "Meeting with Akshay", "Project Discussion", "Call with Bob"
 - Infer priority from urgency words (urgent/asap = high, important = medium, default = medium)
 - ALWAYS assign a category from the available categories list above. Pick the best match based on context:
   - Work-related tasks (meeting, deadline, project, office, report, email, client) → "Work"
@@ -234,5 +238,44 @@ export async function parseNaturalLanguage(input: string, categoryNames?: string
   const content = response.choices[0]?.message?.content;
   if (!content) throw new Error('AI returned empty response');
 
-  return JSON.parse(content) as ParsedTask;
+  const result = JSON.parse(content) as ParsedTask;
+
+  // Clean up meeting titles — strip verbose prefixes the AI copies from input
+  if (result.is_meeting) {
+    result.title = cleanMeetingTitle(result.title);
+  }
+
+  return result;
+}
+
+/** Strip verbose meeting prefixes and produce a short, natural title */
+function cleanMeetingTitle(title: string): string {
+  let cleaned = title.replace(
+    /^(?:schedule|set\s*up|book|arrange|add|create|plan|have)\s+(?:a\s+)?(?:meeting|call|event|catch-?up|sync)\s+/i,
+    ''
+  ).trim();
+
+  if (!cleaned || cleaned === title) return title;
+
+  if (/^(?:about|regarding|for)\s+/i.test(cleaned)) {
+    return `Meeting ${cleaned}`;
+  }
+
+  if (/^(?:with)\s+/i.test(cleaned)) {
+    return `Meet ${cleaned}`;
+  }
+
+  if (/^to\s+/i.test(cleaned)) {
+    cleaned = cleaned.slice(3).trim();
+    if (!cleaned) return title;
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+
+  cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  const startsWithVerb = /^(?:speak|talk|discuss|review|catch|sync|meet|call|check|go\s+over|plan|prep)/i.test(cleaned);
+  if (!startsWithVerb) {
+    cleaned = `Meet with ${cleaned}`;
+  }
+
+  return cleaned;
 }
