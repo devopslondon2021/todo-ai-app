@@ -13,6 +13,34 @@ import { env } from '../config/env.js';
 // Store pending tasks awaiting dedup confirmation
 const pendingTasks = new Map<string, { userId: string; parsed: aiService.ParsedTask }>();
 
+// Cache last displayed task list per user so numbered commands (done/delete/move)
+// reference the same list the user saw (TTL: 10 min)
+interface CachedTask { id: string; title: string; }
+const lastTaskList = new Map<string, { tasks: CachedTask[]; ts: number }>();
+const TASK_LIST_TTL = 600_000;
+
+function cacheTaskList(jid: string, tasks: { id: string; title: string }[]) {
+  lastTaskList.set(jid, { tasks, ts: Date.now() });
+}
+
+function getCachedTaskList(jid: string): CachedTask[] | null {
+  const entry = lastTaskList.get(jid);
+  if (entry && Date.now() - entry.ts < TASK_LIST_TTL) return entry.tasks;
+  lastTaskList.delete(jid);
+  return null;
+}
+
+/** Resolve a task number to a task, using cached list if available, else fallback to getRecentTasks */
+async function resolveTaskByNumber(userId: string, jid: string, taskNumber: number): Promise<CachedTask | null> {
+  const cached = getCachedTaskList(jid);
+  if (cached) {
+    return cached[taskNumber - 1] || null;
+  }
+  // Fallback: no cached list, use getRecentTasks
+  const tasks = await taskService.getRecentTasks(userId);
+  return tasks[taskNumber - 1] || null;
+}
+
 // Simple user cache to avoid repeated DB lookups (TTL: 10 min)
 const userCache = new Map<string, { user: { id: string; name: string }; ts: number }>();
 const USER_CACHE_TTL = 600_000;
@@ -286,13 +314,13 @@ async function processTextInput(
 
     case 'list': {
       const tasks = await taskService.getTasksForWhatsApp(user.id, command.filter);
+      cacheTaskList(replyJid, tasks);
       await sendReply(sock, replyJid, formatTaskList(tasks));
       break;
     }
 
     case 'done': {
-      const tasks = await taskService.getRecentTasks(user.id);
-      const task = tasks[command.taskNumber - 1];
+      const task = await resolveTaskByNumber(user.id, replyJid, command.taskNumber);
       if (!task) {
         await sendReply(sock, replyJid, `❌ Task #${command.taskNumber} not found. Use "list" to see tasks.`);
       } else {
@@ -314,8 +342,7 @@ async function processTextInput(
     }
 
     case 'delete': {
-      const tasks = await taskService.getRecentTasks(user.id);
-      const task = tasks[command.taskNumber - 1];
+      const task = await resolveTaskByNumber(user.id, replyJid, command.taskNumber);
       if (!task) {
         await sendReply(sock, replyJid, `❌ Task #${command.taskNumber} not found. Use "list" to see tasks.`);
       } else {
@@ -332,8 +359,7 @@ async function processTextInput(
     }
 
     case 'move': {
-      const tasks = await taskService.getRecentTasks(user.id);
-      const task = tasks[command.taskNumber - 1];
+      const task = await resolveTaskByNumber(user.id, replyJid, command.taskNumber);
       if (!task) {
         await sendReply(sock, replyJid, `❌ Task #${command.taskNumber} not found. Use "list" to see tasks.`);
       } else {
@@ -474,11 +500,13 @@ async function processTextInput(
         }
         case 'query': {
           const tasks = await taskService.getTasksForWhatsApp(user.id, classified.timeFilter, classified.search);
+          cacheTaskList(replyJid, tasks);
           await sendReply(sock, replyJid, formatQueryResult(tasks, classified.search, classified.timeFilter));
           break;
         }
         case 'list': {
           const tasks = await taskService.getTasksForWhatsApp(user.id, classified.timeFilter);
+          cacheTaskList(replyJid, tasks);
           await sendReply(sock, replyJid, formatTaskList(tasks));
           break;
         }
