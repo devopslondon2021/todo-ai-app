@@ -393,6 +393,37 @@ export async function markComplete(taskId: string): Promise<void> {
   await getSupabase().from('reminders').update({ is_sent: true }).eq('task_id', taskId).eq('is_sent', false);
 }
 
+export async function moveTask(taskId: string, userId: string, newDueDate: string): Promise<Task> {
+  // Update the task's due_date
+  const { data: task, error } = await getSupabase()
+    .from('tasks')
+    .update({ due_date: newDueDate })
+    .eq('id', taskId)
+    .select('*, categories(name)')
+    .single();
+
+  if (error) throw error;
+
+  // Cancel old unsent reminders for this task
+  await getSupabase()
+    .from('reminders')
+    .update({ is_sent: true })
+    .eq('task_id', taskId)
+    .eq('is_sent', false);
+
+  // Create a new reminder 30 min before the new due date (if in future)
+  const reminderTime = new Date(new Date(newDueDate).getTime() - 30 * 60_000);
+  if (reminderTime.getTime() > Date.now()) {
+    await getSupabase().from('reminders').insert({
+      task_id: taskId,
+      user_id: userId,
+      reminder_time: reminderTime.toISOString(),
+    });
+  }
+
+  return task;
+}
+
 export async function deleteTask(taskId: string): Promise<void> {
   await getSupabase().from('tasks').delete().eq('id', taskId);
 }

@@ -156,7 +156,8 @@ export function formatHelp(callEscalationEnabled = false): string {
 *Manage Tasks:*
 • *done* [number] — Complete a task
 • *delete* [number] — Delete a task
-• *remove* [number] — Same as delete
+• *move* [number] *to* [date] — Reschedule a task
+  _e.g. "move 2 to tomorrow", "reschedule 1 to next Monday"_
 
 *Videos:*
 • Paste a *YouTube* or *Instagram* link to save it

@@ -331,6 +331,43 @@ async function processTextInput(
       break;
     }
 
+    case 'move': {
+      const tasks = await taskService.getRecentTasks(user.id);
+      const task = tasks[command.taskNumber - 1];
+      if (!task) {
+        await sendReply(sock, replyJid, `❌ Task #${command.taskNumber} not found. Use "list" to see tasks.`);
+      } else {
+        try {
+          const newDate = await aiService.parseMoveDate(command.dateText);
+          const updated = await taskService.moveTask(task.id, user.id, newDate);
+          const formatted = new Date(newDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+          await sendReply(sock, replyJid, `📅 *${updated.title}* moved to ${formatted}`);
+        } catch (err) {
+          console.error('[HANDLER] Move task error:', err);
+          await sendReply(sock, replyJid, '❌ Could not move task. Try again.');
+        }
+      }
+      break;
+    }
+
+    case 'move_search': {
+      const task = await taskService.findTaskByKeywords(user.id, command.search);
+      if (!task) {
+        await sendReply(sock, replyJid, `❌ No active task matching "${command.search}" found.`);
+      } else {
+        try {
+          const newDate = await aiService.parseMoveDate(command.dateText);
+          const updated = await taskService.moveTask(task.id, user.id, newDate);
+          const formatted = new Date(newDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+          await sendReply(sock, replyJid, `📅 *${updated.title}* moved to ${formatted}`);
+        } catch (err) {
+          console.error('[HANDLER] Move task error:', err);
+          await sendReply(sock, replyJid, '❌ Could not move task. Try again.');
+        }
+      }
+      break;
+    }
+
     case 'categories': {
       const tree = await taskService.getCategoryTree(user.id);
       await sendReply(sock, replyJid, tree.length === 0 ? '📂 No categories.' : formatCategoryTree(tree));
@@ -415,6 +452,23 @@ async function processTextInput(
           } else {
             await taskService.markComplete(task.id);
             await sendReply(sock, replyJid, `✅ Completed: *${task.title}*`);
+          }
+          break;
+        }
+        case 'move': {
+          const task = await taskService.findTaskByKeywords(user.id, classified.search);
+          if (!task) {
+            await sendReply(sock, replyJid, `❌ No active task matching "${classified.search}" found.`);
+          } else {
+            try {
+              const newDate = await aiService.parseMoveDate(classified.dateText);
+              const updated = await taskService.moveTask(task.id, user.id, newDate);
+              const formatted = new Date(newDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+              await sendReply(sock, replyJid, `📅 *${updated.title}* moved to ${formatted}`);
+            } catch (err) {
+              console.error('[HANDLER] Move task error:', err);
+              await sendReply(sock, replyJid, '❌ Could not move task. Try again.');
+            }
           }
           break;
         }

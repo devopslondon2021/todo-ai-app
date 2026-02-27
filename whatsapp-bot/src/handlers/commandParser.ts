@@ -12,6 +12,8 @@ export type Command =
   | { type: 'video_link'; url: string; platform: 'youtube' | 'instagram' }
   | { type: 'videos'; subcommand?: 'done'; taskNumber?: number }
   | { type: 'meetings' }
+  | { type: 'move'; taskNumber: number; dateText: string }
+  | { type: 'move_search'; search: string; dateText: string }
   | { type: 'unknown'; text: string };
 
 /** Extract a YouTube or Instagram video URL from text */
@@ -162,6 +164,22 @@ export function parseCommand(text: string): Command {
   }
   if (lower.startsWith('meet ')) {
     return { type: 'meet', text: trimmed.slice(5).trim() };
+  }
+
+  // ── Move / Reschedule / Postpone ──
+  const moveMatch = lower.match(/^(?:move|reschedule|postpone)\s+(\d+)\s+(?:to\s+)?(.+)/);
+  if (moveMatch) {
+    return { type: 'move', taskNumber: parseInt(moveMatch[1], 10), dateText: moveMatch[2].trim() };
+  }
+  const moveSearchMatch = lower.match(/^(?:move|reschedule|postpone)\s+(?:the\s+)?(.+?)\s+to\s+(.+)/);
+  if (moveSearchMatch) {
+    const search = moveSearchMatch[1].replace(/^task\s+/i, '').trim();
+    // If search is just a number, treat as numbered move
+    const num = parseInt(search, 10);
+    if (!isNaN(num) && String(num) === search) {
+      return { type: 'move', taskNumber: num, dateText: moveSearchMatch[2].trim() };
+    }
+    return { type: 'move_search', search, dateText: moveSearchMatch[2].trim() };
   }
 
   // ── Auto-detect video links ──

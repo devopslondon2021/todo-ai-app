@@ -72,6 +72,7 @@ export type ClassifiedIntent =
   | { intent: 'remind'; text: string }
   | { intent: 'meet'; text: string }
   | { intent: 'done'; search: string }
+  | { intent: 'move'; search: string; dateText: string }
   | { intent: 'query'; search: string; timeFilter?: string }
   | { intent: 'list'; timeFilter?: string }
   | { intent: 'summary' }
@@ -82,6 +83,7 @@ const CLASSIFY_PROMPT = `Classify the user's intent. Return JSON with one of the
 - {"intent":"remind","text":"what to remind"}
 - {"intent":"meet","text":"full meeting description"}
 - {"intent":"done","search":"keywords to find the task"}
+- {"intent":"move","search":"keywords to find the task","dateText":"target date text"}
 - {"intent":"query","search":"keyword1 keyword2","timeFilter":"today|tomorrow|this week|etc or omit"}
 - {"intent":"list","timeFilter":"today|this week|overdue|etc or omit"}
 - {"intent":"summary"}
@@ -92,6 +94,7 @@ Rules:
 - "remind" = user wants a reminder
 - "meet" = user wants to schedule a meeting, call, event, or catch-up
 - "done" = user wants to COMPLETE/finish a task (e.g. "done with dental appointment", "I finished the grocery shopping", "mark the meeting as done")
+- "move" = user wants to MOVE/RESCHEDULE/POSTPONE a task to a different date (e.g. "move groceries to tomorrow", "reschedule the meeting to next Monday", "postpone dentist to Friday")
 - "query" = user is ASKING about existing tasks (checking, searching, counting)
   - Patterns: "do I have...", "is there a task...", "what about...", "when is my...", "did I add...", "how many...", "any task for/about..."
   - IMPORTANT: Extract 2-3 short search keywords from the subject, NOT the full question. Strip filler words.
@@ -278,4 +281,44 @@ function cleanMeetingTitle(title: string): string {
   }
 
   return cleaned;
+}
+
+// ─── Move Date Parsing ──────────────────────────────────────────────
+
+const MOVE_DATE_PROMPT = `You convert relative date/time text into an ISO 8601 datetime string.
+
+Current date/time: {{CURRENT_DATETIME}}
+
+Rules:
+- "tomorrow" = next day, keep same time or default to 09:00
+- "next Monday" = the coming Monday
+- "Friday" = the coming Friday (if today is Friday, use next Friday)
+- "March 5th" = March 5th of the current or next year
+- "in 2 days" = current date + 2 days
+- Always return UTC ISO 8601 format
+- If no time is specified, default to 09:00 local time (assume UTC+5:30 IST)
+
+Return ONLY valid JSON: {"date":"2025-01-15T03:30:00.000Z"}`;
+
+export async function parseMoveDate(dateText: string): Promise<string> {
+  const client = getAIClient();
+  const model = getModelName();
+  const now = new Date().toISOString();
+
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: 'system', content: MOVE_DATE_PROMPT.replace('{{CURRENT_DATETIME}}', now) },
+      { role: 'user', content: dateText },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0,
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) throw new Error('AI returned empty response for date parsing');
+
+  const parsed = JSON.parse(content) as { date: string };
+  if (!parsed.date) throw new Error('AI did not return a date');
+  return parsed.date;
 }
