@@ -11,7 +11,7 @@ export type Command =
   | { type: 'help' }
   | { type: 'video_link'; url: string; platform: 'youtube' | 'instagram' }
   | { type: 'videos'; subcommand?: 'done'; taskNumber?: number }
-  | { type: 'meetings' }
+  | { type: 'meetings'; filter?: string }
   | { type: 'move'; taskNumber: number; dateText: string }
   | { type: 'move_search'; search: string; dateText: string }
   | { type: 'unknown'; text: string };
@@ -30,6 +30,54 @@ function detectVideoLink(text: string): { url: string; platform: 'youtube' | 'in
     return { url, platform: 'instagram' };
   }
   return null;
+}
+
+/** Known time-filter words for compound filter extraction */
+const TIME_WORDS = new Set(['today', 'tomorrow', 'overdue', 'pending', 'completed']);
+const MULTI_WORD_TIME = ['this week', 'next week'];
+
+/** Try to extract a time filter and leftover category from a raw filter string.
+ *  e.g. "work today" → { time: 'today', category: 'work' }
+ *       "today" → { time: 'today', category: undefined }
+ *       "work" → { time: undefined, category: 'work' }
+ */
+export function splitFilter(raw: string): { time?: string; category?: string } {
+  const f = raw.toLowerCase().trim();
+  if (!f) return {};
+
+  // Direct match for known time filters
+  if (TIME_WORDS.has(f)) return { time: f };
+  for (const mt of MULTI_WORD_TIME) {
+    if (f === mt) return { time: mt };
+  }
+
+  // Try extracting multi-word time first (e.g. "work this week")
+  for (const mt of MULTI_WORD_TIME) {
+    if (f.includes(mt)) {
+      const cat = f.replace(mt, '').trim();
+      return { time: mt, category: cat || undefined };
+    }
+  }
+
+  // Try extracting single-word time
+  const words = f.split(/\s+/);
+  for (const w of words) {
+    if (TIME_WORDS.has(w)) {
+      const cat = words.filter(x => x !== w).join(' ').trim();
+      return { time: w, category: cat || undefined };
+    }
+  }
+
+  // Check for "today's" / "tomorrow's" variants
+  for (const w of words) {
+    const cleaned = w.replace(/'s?$/, '');
+    if (TIME_WORDS.has(cleaned)) {
+      const cat = words.filter(x => x !== w).join(' ').trim();
+      return { time: cleaned, category: cat || undefined };
+    }
+  }
+
+  return { category: f };
 }
 
 export function parseCommand(text: string): Command {
@@ -84,14 +132,20 @@ export function parseCommand(text: string): Command {
     return { type: 'list', filter: 'overdue' };
   }
 
+  // Standalone "today" / "tomorrow" → list with that filter
+  if (/^(today|tomorrow)$/.test(lower)) {
+    return { type: 'list', filter: lower };
+  }
+
   // "all tasks", "my tasks", "show all", "show all tasks", "list all", "list everything"
   if (/^(?:all\s+tasks?|my\s+tasks?|show\s+(?:all(?:\s+tasks?)?|my\s+tasks?)|list\s+(?:all(?:\s+tasks?)?|everything)|get\s+(?:all\s+)?tasks?)$/.test(lower)) {
     return { type: 'list' };
   }
 
-  // "today's tasks", "today tasks", "what's for today"
-  if (/^(?:today'?s?\s+tasks?|what'?s?\s+(?:for\s+)?today)$/.test(lower)) {
-    return { type: 'list', filter: 'today' };
+  // "today's tasks", "today tasks", "tomorrow's tasks", "what's for today/tomorrow"
+  const possessiveTaskMatch = lower.match(/^(?:(today|tomorrow)'?s?\s+tasks?|what'?s?\s+(?:for\s+)?(today|tomorrow))$/);
+  if (possessiveTaskMatch) {
+    return { type: 'list', filter: possessiveTaskMatch[1] || possessiveTaskMatch[2] };
   }
 
   // "pending tasks", "overdue tasks", "completed tasks"
@@ -100,23 +154,49 @@ export function parseCommand(text: string): Command {
     return { type: 'list', filter };
   }
 
-  // "show/get/list today's tasks", "show/get/list my tasks"
-  const listNaturalMatch = lower.match(/^(?:show|get|list)\s+(?:my\s+)?(?:today'?s?\s+)?tasks?$/);
+  // "show/get/list today's tasks", "show/get/list my tasks", "show my tasks today"
+  const listNaturalMatch = lower.match(/^(?:show|get|list)\s+(?:my\s+)?(?:(?:today|tomorrow)'?s?\s+)?tasks?(?:\s+(today|tomorrow))?$/);
   if (listNaturalMatch) {
-    const filter = lower.includes('today') ? 'today' : undefined;
+    const filter = listNaturalMatch[1] || (lower.includes('today') ? 'today' : lower.includes('tomorrow') ? 'tomorrow' : undefined);
     return { type: 'list', filter };
   }
 
-  // "list meetings", "show meetings", "my meetings", "list all meetings"
-  if (/^(?:(?:list|show|get)\s+(?:all\s+)?meetings?|my\s+meetings?)$/.test(lower)) {
-    return { type: 'meetings' };
+  // ── Meetings listing (with optional time filter) ──
+  // "list meetings", "show meetings today", "list today's meetings", "list all meetings tomorrow"
+  const meetingsListMatch = lower.match(
+    /^(?:(?:list|show|get)\s+(?:all\s+)?(?:(today'?s?|tomorrow'?s?|(?:this|next)\s+week'?s?)\s+)?meetings?(?:\s+(today|tomorrow|(?:this|next)\s+week))?|my\s+meetings?(?:\s+(today|tomorrow|(?:this|next)\s+week))?)$/
+  );
+  if (meetingsListMatch) {
+    const raw = meetingsListMatch[1]?.replace(/'s?$/, '') || meetingsListMatch[2] || meetingsListMatch[3];
+    return { type: 'meetings', filter: raw };
   }
 
+  // "list meetings for today" — with preposition
+  const meetingsForMatch = lower.match(
+    /^(?:list|show|get)\s+(?:all\s+)?meetings?\s+(?:for|on|this)\s+(today|tomorrow|(?:this|next)\s+week)$/
+  );
+  if (meetingsForMatch) {
+    return { type: 'meetings', filter: meetingsForMatch[1] };
+  }
+
+  // Generic "list" command — MUST come after specific list/meetings patterns above
   if (lower === 'list' || lower.startsWith('list ')) {
-    const raw = trimmed.slice(4).trim() || undefined;
-    // Normalize "today's tasks" → "today"
-    const filter = raw?.replace(/^today'?s\s+tasks?$/i, 'today') || raw;
-    return { type: 'list', filter };
+    const raw = lower.slice(4).trim() || undefined;
+    if (!raw) return { type: 'list' };
+
+    // Check if raw contains "meeting(s)" — route to meetings with filter
+    if (/\bmeetings?\b/.test(raw)) {
+      const withoutMeeting = raw.replace(/\bmeetings?\b/, '').replace(/\b(?:my|all|for|on)\b/g, '').replace(/\s+/g, ' ').trim();
+      const filter = withoutMeeting || undefined;
+      return { type: 'meetings', filter };
+    }
+
+    // Normalize common patterns
+    const normalized = raw
+      .replace(/^today'?s?\s+tasks?$/, 'today')
+      .replace(/^tomorrow'?s?\s+tasks?$/, 'tomorrow');
+
+    return { type: 'list', filter: normalized };
   }
 
   if (lower.startsWith('done ')) {
@@ -141,9 +221,14 @@ export function parseCommand(text: string): Command {
     return { type: 'remind', text: trimmed.slice(prefix).trim() };
   }
 
-  // ── Meetings command ──
-  if (lower === 'meetings' || lower === 'meeting' || lower === 'calendar') {
-    return { type: 'meetings' };
+  // ── Meetings command (standalone, with optional time filter) ──
+  // "meetings", "meetings today", "calendar tomorrow", "today's meetings", "today meeting"
+  const meetStandaloneMatch = lower.match(
+    /^(?:(?:(today|tomorrow)'?s?|((?:this|next)\s+week)'?s?)\s+meetings?|(?:meetings?|calendar)(?:\s+(today|tomorrow|(?:this|next)\s+week))?)$/
+  );
+  if (meetStandaloneMatch) {
+    const filter = meetStandaloneMatch[1] || meetStandaloneMatch[2] || meetStandaloneMatch[3];
+    return { type: 'meetings', filter };
   }
 
   // ── Videos command ──
@@ -186,6 +271,16 @@ export function parseCommand(text: string): Command {
   const videoLink = detectVideoLink(trimmed);
   if (videoLink) {
     return { type: 'video_link', url: videoLink.url, platform: videoLink.platform };
+  }
+
+  // ── Typo tolerance for "list" (e.g. "listt", "lis", "lisst") ──
+  if (/^l+i+s+t*\b/i.test(lower) && !/^list\b/.test(lower) && lower.length > 2) {
+    const rest = lower.replace(/^\S+\s*/, '').trim() || undefined;
+    if (rest && /\bmeetings?\b/.test(rest)) {
+      const withoutMeeting = rest.replace(/\bmeetings?\b/, '').replace(/\b(?:my|all|for|on)\b/g, '').replace(/\s+/g, ' ').trim();
+      return { type: 'meetings', filter: withoutMeeting || undefined };
+    }
+    return { type: 'list', filter: rest };
   }
 
   return { type: 'unknown', text: trimmed };

@@ -1,5 +1,6 @@
 import { getSupabase } from '../config/supabase.js';
 import { getAllVideoCategoryIds } from './videoService.js';
+import { splitFilter } from '../handlers/commandParser.js';
 import type { ParsedTask } from './aiService.js';
 
 interface User {
@@ -330,10 +331,23 @@ export async function getTasksForWhatsApp(userId: string, filter?: string, searc
     } else if (['pending', 'in_progress', 'completed'].includes(f)) {
       query = query.eq('status', f);
     } else {
-      // Try as category name
-      query = query
-        .neq('status', 'completed')
-        .ilike('categories.name' as any, f);
+      // Try splitting compound filter (e.g. "work today", "personal tomorrow")
+      const { time, category } = splitFilter(f);
+      const compoundRange = time ? parseTimeFilter(time) : null;
+
+      query = query.neq('status', 'completed');
+      if (compoundRange) {
+        query = query
+          .gte('due_date', compoundRange.start.toISOString())
+          .lte('due_date', compoundRange.end.toISOString());
+      }
+      if (category) {
+        query = query.ilike('categories.name' as any, category);
+      }
+      // If neither time nor category extracted, treat whole string as category name
+      if (!compoundRange && !category) {
+        query = query.ilike('categories.name' as any, f);
+      }
     }
   } else {
     // Default list: show all non-completed tasks (including overdue)
@@ -519,8 +533,8 @@ export async function getUpcomingReminders(userId: string) {
   return data || [];
 }
 
-/** Get upcoming meetings (tasks in "Meetings" category with future due dates) */
-export async function getMeetings(userId: string) {
+/** Get upcoming meetings (tasks in "Meetings" category), optionally filtered by date */
+export async function getMeetings(userId: string, filter?: string) {
   // Find the Meetings category
   const { data: cat } = await getSupabase()
     .from('categories')
@@ -532,7 +546,7 @@ export async function getMeetings(userId: string) {
 
   if (!cat) return [];
 
-  const { data, error } = await getSupabase()
+  let query = getSupabase()
     .from('tasks')
     .select('*, categories(name)')
     .eq('user_id', userId)
@@ -541,6 +555,16 @@ export async function getMeetings(userId: string) {
     .order('due_date', { ascending: true })
     .limit(15);
 
+  if (filter) {
+    const dateRange = parseTimeFilter(filter);
+    if (dateRange) {
+      query = query
+        .gte('due_date', dateRange.start.toISOString())
+        .lte('due_date', dateRange.end.toISOString());
+    }
+  }
+
+  const { data, error } = await query;
   if (error) throw error;
   return data || [];
 }

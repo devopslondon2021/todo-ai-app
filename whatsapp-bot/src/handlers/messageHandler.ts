@@ -431,7 +431,7 @@ async function processTextInput(
     }
 
     case 'meetings': {
-      const meetings = await taskService.getMeetings(user.id);
+      const meetings = await taskService.getMeetings(user.id, command.filter);
       await sendReply(sock, replyJid, formatMeetingList(meetings));
       break;
     }
