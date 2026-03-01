@@ -36,7 +36,7 @@ export function startBotApiServer(port: number): void {
     res.json({ userId, status });
   });
 
-  app.listen(port, () => {
-    console.log(`🤖 Bot API server listening on port ${port}`);
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`🤖 Bot API server listening on 0.0.0.0:${port}`);
   });
 }

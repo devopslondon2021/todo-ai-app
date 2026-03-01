@@ -77,14 +77,17 @@ export async function handleQrStream(req: Request, res: Response): Promise<void>
 // POST /connect — proxy to bot API
 router.post('/connect', async (req: Request, res: Response) => {
   try {
-    const response = await fetch(`${env.WHATSAPP_BOT_URL}/connect`, {
+    const url = `${env.WHATSAPP_BOT_URL}/connect`;
+    console.log(`[WA] POST ${url} userId=${req.appUserId}`);
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId: req.appUserId }),
     });
     const data = await response.json();
     res.status(response.status).json(data);
-  } catch {
+  } catch (err) {
+    console.error(`[WA] Bot unreachable at ${env.WHATSAPP_BOT_URL}:`, (err as Error).message);
     res.status(503).json({ error: 'Bot service unavailable' });
   }
 });

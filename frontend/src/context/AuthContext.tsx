@@ -5,8 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import type { User } from "@/types";
-
-const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+import { api } from "@/lib/api";
 
 interface AuthContextValue {
   supabaseUser: SupabaseUser | null;
@@ -29,19 +28,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function fetchAppUser(accessToken: string) {
+  async function fetchAppUser(_accessToken: string) {
     try {
-      const res = await fetch(`${BASE_URL}/api/users/me`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data.data);
-      }
+      const data = await api<{ data: User }>("/users/me", { method: "POST" });
+      setUser(data.data);
     } catch {}
   }
 
