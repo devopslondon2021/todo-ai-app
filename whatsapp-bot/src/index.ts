@@ -1,26 +1,29 @@
 import { env } from './config/env.js';
 
 async function main() {
+  console.log('🚀 Starting Todo AI WhatsApp Bot (multi-user mode)...');
+  console.log(`   BACKEND_URL: ${env.BACKEND_URL}`);
+  console.log(`   BOT_API_PORT: ${env.BOT_API_PORT}\n`);
+
+  // Always start the HTTP server first so the platform health check passes
+  const { startBotApiServer } = await import('./api/server.js');
+  startBotApiServer(env.BOT_API_PORT);
+
   const missing: string[] = [];
   if (!env.SUPABASE_URL) missing.push('SUPABASE_URL');
   if (!env.SUPABASE_SERVICE_ROLE_KEY) missing.push('SUPABASE_SERVICE_ROLE_KEY');
 
   if (missing.length > 0) {
     console.warn(`⚠️  WhatsApp Bot: Missing env vars: ${missing.join(', ')}`);
-    console.warn('   Set these in .env and restart to enable the WhatsApp bot.\n');
+    console.warn('   Bot API server is running but WhatsApp features are disabled.\n');
     return;
   }
 
   const { initSessionManager, reconnectAll } = await import('./connection/sessionManager.js');
   const { createMessageHandler } = await import('./handlers/messageHandler.js');
-  const { startBotApiServer } = await import('./api/server.js');
   const { startReminderScheduler } = await import('./scheduler/reminderCron.js');
   const { startDailySummaryScheduler } = await import('./scheduler/dailySummary.js');
   const { startCalendarSyncScheduler } = await import('./scheduler/calendarSync.js');
-
-  console.log('🚀 Starting Todo AI WhatsApp Bot (multi-user mode)...');
-  console.log(`   BACKEND_URL: ${env.BACKEND_URL}`);
-  console.log(`   BOT_API_PORT: ${env.BOT_API_PORT}\n`);
 
   function onQR(userId: string, qr: string) {
     console.log(`[QR] User ${userId}: new QR code generated`);
@@ -41,9 +44,12 @@ async function main() {
   }
 
   initSessionManager(onQR, onStatus, createMessageHandler);
-  startBotApiServer(env.BOT_API_PORT);
 
-  await reconnectAll();
+  try {
+    await reconnectAll();
+  } catch (err) {
+    console.error('[SESSION] reconnectAll failed (non-fatal):', err);
+  }
 
   startReminderScheduler();
   startDailySummaryScheduler();
@@ -52,5 +58,4 @@ async function main() {
 
 main().catch((err) => {
   console.error('Fatal error:', err);
-  process.exit(1);
 });
