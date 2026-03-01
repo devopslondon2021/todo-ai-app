@@ -15,8 +15,9 @@ vi.mock('../config/supabase.js', () => ({
 }));
 
 const mockSendMessage = vi.fn().mockResolvedValue({ key: { id: 'msg-1' } });
-vi.mock('../connection/whatsapp.js', () => ({
-  getSocket: () => ({ sendMessage: mockSendMessage }),
+vi.mock('../connection/sessionManager.js', () => ({
+  getSocketForUser: (_userId: string) => ({ sendMessage: mockSendMessage }),
+  trackSentMessage: vi.fn(),
 }));
 
 const mockIsEnabled = vi.fn(() => false);
@@ -70,13 +71,13 @@ describe('reminderCron', () => {
           id: 'rem-1',
           reminder_time: new Date().toISOString(),
           tasks: { title: 'Buy milk', description: null, priority: 'medium', due_date: null, status: 'pending' },
-          users: { whatsapp_jid: '1234@s.whatsapp.net' },
+          users: { id: 'user-1', whatsapp_jid: '1234@s.whatsapp.net' },
         },
         {
           id: 'rem-2',
           reminder_time: new Date().toISOString(),
           tasks: { title: 'Call dentist', description: 'Annual checkup', priority: 'high', due_date: '2026-02-22T10:00:00Z', status: 'pending' },
-          users: { whatsapp_jid: '1234@s.whatsapp.net' },
+          users: { id: 'user-1', whatsapp_jid: '1234@s.whatsapp.net' },
         },
       ]);
       mockSupabaseFrom.mockReturnValue(chain);
@@ -103,7 +104,7 @@ describe('reminderCron', () => {
           id: 'rem-1',
           reminder_time: new Date().toISOString(),
           tasks: { title: 'Done task', description: null, priority: 'low', due_date: null, status: 'completed' },
-          users: { whatsapp_jid: '5555@s.whatsapp.net' },
+          users: { id: 'user-1', whatsapp_jid: '5555@s.whatsapp.net' },
         },
       ]);
 
@@ -130,7 +131,7 @@ describe('reminderCron', () => {
           id: 'rem-1',
           reminder_time: new Date().toISOString(),
           tasks: { title: 'Test', description: null, priority: 'low', due_date: null, status: 'pending' },
-          users: { whatsapp_jid: '5555@s.whatsapp.net' },
+          users: { id: 'user-1', whatsapp_jid: '5555@s.whatsapp.net' },
         },
       ]);
 
@@ -171,7 +172,7 @@ describe('reminderCron', () => {
         {
           id: 'rem-2',
           tasks: { title: 'Urgent task' },
-          users: { whatsapp_jid: '919876543210@s.whatsapp.net' },
+          users: { id: 'user-1', whatsapp_jid: '919876543210@s.whatsapp.net' },
         },
       ]);
 
@@ -192,7 +193,7 @@ describe('reminderCron', () => {
         {
           id: 'rem-3',
           tasks: { title: 'Call test' },
-          users: { whatsapp_jid: '5551234567@s.whatsapp.net' },
+          users: { id: 'user-1', whatsapp_jid: '5551234567@s.whatsapp.net' },
         },
       ]);
 

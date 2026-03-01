@@ -1,19 +1,16 @@
 import cron from 'node-cron';
 import { getSupabase } from '../config/supabase.js';
-import { getSocket } from '../connection/whatsapp.js';
+import { getSocketForUser } from '../connection/sessionManager.js';
 import { getTasksForWhatsApp, getMeetings } from '../services/taskService.js';
 import { formatMorningSummary } from '../utils/formatter.js';
 
 export function startDailySummaryScheduler(): void {
   cron.schedule('0 7 * * *', async () => {
-    const sock = getSocket();
-    if (!sock) return;
-
     try {
       const { data: users, error } = await getSupabase()
         .from('users')
         .select('id, whatsapp_jid')
-        .not('whatsapp_jid', 'is', null);
+        .eq('whatsapp_connected', true);
 
       if (error || !users) {
         if (error) console.error('[DAILY] User query error:', error);
@@ -22,13 +19,15 @@ export function startDailySummaryScheduler(): void {
 
       for (const user of users) {
         const jid = user.whatsapp_jid as string;
+        const sock = getSocketForUser(user.id);
+        if (!sock || !jid) continue;
+
         try {
           const [tasks, allMeetings] = await Promise.all([
             getTasksForWhatsApp(user.id, 'today'),
             getMeetings(user.id),
           ]);
 
-          // Filter meetings to today only
           const now = new Date();
           const todayStart = new Date(now);
           todayStart.setHours(0, 0, 0, 0);
@@ -41,7 +40,6 @@ export function startDailySummaryScheduler(): void {
             return d >= todayStart && d <= todayEnd;
           });
 
-          // Skip users with nothing due today
           if (tasks.length === 0 && todayMeetings.length === 0) continue;
 
           const message = formatMorningSummary(tasks, todayMeetings);

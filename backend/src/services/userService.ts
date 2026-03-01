@@ -60,6 +60,85 @@ export async function createUser(data: { name?: string; phone_number?: string })
   return user;
 }
 
+export async function getUserByAuthId(authId: string): Promise<User | null> {
+  const { data, error } = await getSupabase()
+    .from('users')
+    .select('*')
+    .eq('auth_id', authId)
+    .single();
+
+  if (error) return null;
+  return data;
+}
+
+export async function getOrCreateByAuthId(
+  authId: string,
+  email: string,
+  metadata?: Record<string, unknown>,
+): Promise<User> {
+  // Step 1: Find by auth_id
+  const { data: byAuthId } = await getSupabase()
+    .from('users')
+    .select('*')
+    .eq('auth_id', authId)
+    .single();
+  if (byAuthId) return byAuthId;
+
+  // Step 2: Find by email where auth_id IS NULL → claim
+  if (email) {
+    const { data: byEmail } = await getSupabase()
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .is('auth_id', null)
+      .single();
+    if (byEmail) {
+      const { data: claimed } = await getSupabase()
+        .from('users')
+        .update({ auth_id: authId, email })
+        .eq('id', byEmail.id)
+        .select('*')
+        .single();
+      if (claimed) return claimed;
+    }
+  }
+
+  // Step 3: Find oldest user with auth_id IS NULL AND email IS NULL → claim (first signup inherits)
+  const { data: unlinked } = await getSupabase()
+    .from('users')
+    .select('*')
+    .is('auth_id', null)
+    .is('email', null)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .single();
+  if (unlinked) {
+    const updateData: Record<string, string> = { auth_id: authId };
+    if (email) updateData.email = email;
+    const name = (metadata?.name as string) || (metadata?.full_name as string) || unlinked.name;
+    if (name && name !== unlinked.name) updateData.name = name;
+    const { data: claimed } = await getSupabase()
+      .from('users')
+      .update(updateData)
+      .eq('id', unlinked.id)
+      .select('*')
+      .single();
+    if (claimed) return claimed;
+  }
+
+  // Step 4: Create new user + seed default categories
+  const name = (metadata?.name as string) || (metadata?.full_name as string) || email.split('@')[0] || 'User';
+  const { data: newUser, error } = await getSupabase()
+    .from('users')
+    .insert({ auth_id: authId, email: email || null, name })
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  await getSupabase().rpc('seed_default_categories', { p_user_id: newUser.id });
+  return newUser;
+}
+
 export async function getUserByApiKey(apiKey: string): Promise<User | null> {
   const { data, error } = await getSupabase()
     .from('users')

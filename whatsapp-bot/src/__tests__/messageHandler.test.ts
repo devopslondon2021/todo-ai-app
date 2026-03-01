@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock all external dependencies before importing the handler
 vi.mock('../services/taskService.js', () => ({
+  getUserById: vi.fn(),
   getOrCreateUser: vi.fn(),
   createTask: vi.fn(),
   createTaskFromParsed: vi.fn(),
@@ -21,12 +22,13 @@ vi.mock('../services/taskService.js', () => ({
 vi.mock('../services/aiService.js', () => ({
   parseNaturalLanguage: vi.fn(),
   classifyIntent: vi.fn().mockResolvedValue({ intent: 'unknown' }),
+  splitMultiTaskInput: vi.fn().mockImplementation((input: string) => Promise.resolve([input])),
+  parseMoveDate: vi.fn(),
 }));
 
-vi.mock('../connection/whatsapp.js', () => ({
+vi.mock('../connection/sessionManager.js', () => ({
   trackSentMessage: vi.fn(),
   storeSentMessage: vi.fn(),
-  getMyPhoneJid: vi.fn(() => null),
 }));
 
 vi.mock('../services/callService.js', () => ({
@@ -51,12 +53,14 @@ vi.mock('../config/env.js', () => ({
   env: { AI_PROVIDER: 'openai' },
 }));
 
-import { handleMessage } from '../handlers/messageHandler.js';
+import { createMessageHandler, _clearCaches } from '../handlers/messageHandler.js';
 import * as taskService from '../services/taskService.js';
 import * as aiService from '../services/aiService.js';
 import * as videoService from '../services/videoService.js';
 import { transcribeVoiceMessage } from '../services/transcriptionService.js';
 import { env } from '../config/env.js';
+
+const TEST_USER_ID = 'user-1';
 
 // Helper to create a mock WASocket
 function mockSocket() {
@@ -95,9 +99,12 @@ const MOCK_TASK = {
   categories: { name: 'Personal' },
 };
 
+const handleMessage = createMessageHandler(TEST_USER_ID);
+
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(taskService.getOrCreateUser).mockResolvedValue(MOCK_USER);
+  _clearCaches();
+  vi.mocked(taskService.getUserById).mockResolvedValue(MOCK_USER);
   vi.mocked(taskService.findDuplicates).mockResolvedValue([]);
   vi.mocked(taskService.getCategories).mockResolvedValue([]);
   vi.mocked(taskService.resolveCategoryPath).mockResolvedValue(undefined);
@@ -668,11 +675,10 @@ describe('handleMessage', () => {
   // ─── ERROR HANDLING ───
   describe('error handling', () => {
     it('sends error message on service failure', async () => {
-      vi.mocked(taskService.getOrCreateUser).mockRejectedValue(new Error('DB error'));
+      vi.mocked(taskService.getUserById).mockRejectedValue(new Error('DB error'));
 
       const sock = mockSocket();
-      // Use a unique JID to avoid user cache hit from prior tests
-      await handleMessage(sock, mockMsg('help', '9999999999@s.whatsapp.net'));
+      await handleMessage(sock, mockMsg('help'));
 
       const reply = sock.sendMessage.mock.calls[0][1].text;
       expect(reply).toContain('Something went wrong');

@@ -11,7 +11,21 @@ export interface User {
   google_calendar_connected: boolean;
   google_client_id: string | null;
   google_client_secret: string | null;
+  email?: string | null;
+  auth_id?: string | null;
   created_at: string;
+}
+
+// Express Request extensions for auth middleware
+declare global {
+  namespace Express {
+    interface Request {
+      authUserId?: string;
+      authEmail?: string;
+      authMeta?: Record<string, unknown>;
+      appUserId?: string;
+    }
+  }
 }
 
 export interface Category {

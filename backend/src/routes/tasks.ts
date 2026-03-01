@@ -22,7 +22,7 @@ function getEndOfWeekDefault(): string {
 // GET /api/tasks?user_id=...&category_id=...&priority=...&status=...
 router.get('/', async (req, res, next) => {
   try {
-    const userId = req.query.user_id as string;
+    const userId = req.appUserId || (req.query.user_id as string);
     if (!userId) {
       res.status(400).json({ error: 'user_id is required' });
       return;
@@ -45,7 +45,7 @@ router.get('/', async (req, res, next) => {
 // GET /api/tasks/stats?user_id=...
 router.get('/stats', async (req, res, next) => {
   try {
-    const userId = req.query.user_id as string;
+    const userId = req.appUserId || (req.query.user_id as string);
     if (!userId) {
       res.status(400).json({ error: 'user_id is required' });
       return;
@@ -60,7 +60,8 @@ router.get('/stats', async (req, res, next) => {
 // POST /api/tasks/parse — AI natural language parsing (supports multi-task input)
 router.post('/parse', async (req, res, next) => {
   try {
-    const { text, user_id, category_names } = req.body;
+    const { text, category_names } = req.body;
+    const user_id = req.appUserId || req.body.user_id;
     if (!text || !user_id) {
       res.status(400).json({ error: 'text and user_id are required' });
       return;
@@ -224,7 +225,8 @@ router.get('/siri/today', apiKeyAuth, async (req, res, next) => {
 // POST /api/tasks/meeting — create a meeting with Google Calendar check
 router.post('/meeting', async (req, res, next) => {
   try {
-    const { user_id, title, priority, due_date, duration_minutes, attendees, category_id, description } = req.body;
+    const { title, priority, due_date, duration_minutes, attendees, category_id, description } = req.body;
+    const user_id = req.appUserId || req.body.user_id;
     if (!user_id || !title) {
       res.status(400).json({ error: 'user_id and title are required' });
       return;
@@ -375,7 +377,8 @@ async function findAlternativeSlots(
 // POST /api/tasks/check-availability — check Google Calendar for conflicts (non-blocking)
 router.post('/check-availability', async (req, res, next) => {
   try {
-    const { user_id, due_date, duration_minutes } = req.body;
+    const { due_date, duration_minutes } = req.body;
+    const user_id = req.appUserId || req.body.user_id;
     if (!user_id || !due_date) {
       res.status(400).json({ error: 'user_id and due_date are required' });
       return;
@@ -422,6 +425,16 @@ router.patch('/reorder', async (req, res, next) => {
       res.status(400).json({ error: 'items array is required' });
       return;
     }
+    // Ownership check: verify all tasks belong to the requesting user
+    if (req.appUserId) {
+      for (const item of items) {
+        const task = await taskService.getTaskById(item.id);
+        if (!task || task.user_id !== req.appUserId) {
+          res.status(404).json({ error: 'Task not found' });
+          return;
+        }
+      }
+    }
     await taskService.reorderTasks(items);
     res.json({ success: true });
   } catch (err) {
@@ -432,8 +445,12 @@ router.patch('/reorder', async (req, res, next) => {
 // PATCH /api/tasks/:id
 router.patch('/:id', async (req, res, next) => {
   try {
-    // Fetch the existing task to check for calendar sync needs
+    // Fetch the existing task to check ownership + calendar sync needs
     const existing = await taskService.getTaskById(req.params.id);
+    if (req.appUserId && (!existing || existing.user_id !== req.appUserId)) {
+      res.status(404).json({ error: 'Task not found' });
+      return;
+    }
     const task = await taskService.updateTask(req.params.id, req.body);
 
     // Propagate title/time changes to Google Calendar
@@ -466,6 +483,11 @@ router.patch('/:id', async (req, res, next) => {
 router.delete('/:id', async (req, res, next) => {
   try {
     const task = await taskService.getTaskById(req.params.id);
+
+    if (req.appUserId && (!task || task.user_id !== req.appUserId)) {
+      res.status(404).json({ error: 'Task not found' });
+      return;
+    }
 
     // Only attempt calendar delete if task has a linked event
     if (task?.google_event_id && task.user_id) {

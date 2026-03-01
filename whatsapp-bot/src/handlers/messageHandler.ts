@@ -6,61 +6,63 @@ import * as calendarService from '../services/calendarService.js';
 import { transcribeVoiceMessage } from '../services/transcriptionService.js';
 import { formatTaskList, formatHelp, formatCategoryTree, formatSummary, formatQueryResult, formatVideoList, formatMeetingList } from '../utils/formatter.js';
 import * as videoService from '../services/videoService.js';
-import { trackSentMessage, storeSentMessage, getMyPhoneJid } from '../connection/whatsapp.js';
+import { trackSentMessage, storeSentMessage, getMyPhoneJid } from '../connection/sessionManager.js';
 import { isCallEscalationEnabled } from '../services/callService.js';
 import { env } from '../config/env.js';
 
-// Store pending tasks awaiting dedup confirmation
+// Store pending tasks awaiting dedup confirmation (keyed by userId)
 const pendingTasks = new Map<string, { userId: string; parsed: aiService.ParsedTask }>();
 
-// Cache last displayed task list per user so numbered commands (done/delete/move)
-// reference the same list the user saw (TTL: 10 min)
+// Cache last displayed task list per user (keyed by userId, TTL: 10 min)
 interface CachedTask { id: string; title: string; }
 const lastTaskList = new Map<string, { tasks: CachedTask[]; ts: number }>();
 const TASK_LIST_TTL = 600_000;
 
-function cacheTaskList(jid: string, tasks: { id: string; title: string }[]) {
-  lastTaskList.set(jid, { tasks, ts: Date.now() });
+function cacheTaskList(userId: string, tasks: { id: string; title: string }[]) {
+  lastTaskList.set(userId, { tasks, ts: Date.now() });
 }
 
-function getCachedTaskList(jid: string): CachedTask[] | null {
-  const entry = lastTaskList.get(jid);
+function getCachedTaskList(userId: string): CachedTask[] | null {
+  const entry = lastTaskList.get(userId);
   if (entry && Date.now() - entry.ts < TASK_LIST_TTL) return entry.tasks;
-  lastTaskList.delete(jid);
+  lastTaskList.delete(userId);
   return null;
 }
 
-/** Resolve a task number to a task, using cached list if available, else fallback to getRecentTasks */
-async function resolveTaskByNumber(userId: string, jid: string, taskNumber: number): Promise<CachedTask | null> {
-  const cached = getCachedTaskList(jid);
-  if (cached) {
-    return cached[taskNumber - 1] || null;
-  }
-  // Fallback: no cached list, use getRecentTasks
+async function resolveTaskByNumber(userId: string, taskNumber: number): Promise<CachedTask | null> {
+  const cached = getCachedTaskList(userId);
+  if (cached) return cached[taskNumber - 1] || null;
   const tasks = await taskService.getRecentTasks(userId);
   return tasks[taskNumber - 1] || null;
 }
 
-// Simple user cache to avoid repeated DB lookups (TTL: 10 min)
+// Simple user cache (keyed by userId, TTL: 10 min)
 const userCache = new Map<string, { user: { id: string; name: string }; ts: number }>();
 const USER_CACHE_TTL = 600_000;
 
-function getCachedUser(jid: string) {
-  const entry = userCache.get(jid);
+function getCachedUser(userId: string) {
+  const entry = userCache.get(userId);
   if (entry && Date.now() - entry.ts < USER_CACHE_TTL) return entry.user;
-  userCache.delete(jid);
+  userCache.delete(userId);
   return null;
 }
 
+/** Clear all per-user caches. Exported for test use only. */
+export function _clearCaches(): void {
+  userCache.clear();
+  lastTaskList.clear();
+  pendingTasks.clear();
+}
+
 /** Send a message with retry for self-chat session establishment. */
-async function sendReply(sock: WASocket, jid: string, text: string) {
+async function sendReply(sock: WASocket, jid: string, text: string, userId: string) {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const sent = await sock.sendMessage(jid, { text });
       if (sent?.key?.id) {
-        trackSentMessage(sent.key.id);
+        trackSentMessage(userId, sent.key.id);
         if (sent.message) {
-          storeSentMessage(sent.key.id, sent.message);
+          storeSentMessage(userId, sent.key.id, sent.message);
         }
       }
       return;
@@ -90,7 +92,7 @@ function formatTaskReply(task: { title: string; priority: string; due_date: stri
 async function processSingleTask(
   parsed: aiService.ParsedTask,
   user: { id: string; name: string },
-  jid: string,
+  userId: string,
 ): Promise<string> {
   // ── MEETING FLOW ──
   if (parsed.is_meeting) {
@@ -109,13 +111,11 @@ async function processSingleTask(
       try {
         const startTime = new Date(parsed.due_date);
 
-        // Step 1: Check availability (returns conflicts + alternative slots)
         try {
           const avail = await calendarService.checkAvailability(
             user.id, startTime.toISOString(), durationMin
           );
           if (!avail.free) {
-            // Build conflict details
             conflictWarning = avail.conflicts
               .map(c => {
                 const cStart = new Date(c.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -123,7 +123,6 @@ async function processSingleTask(
                 return `• "${c.summary}" ${cStart} – ${cEnd}`;
               }).join('\n');
 
-            // Build suggested alternatives
             let altText = '';
             if (avail.alternatives?.length) {
               const altSlots = avail.alternatives.map(s => {
@@ -143,7 +142,6 @@ async function processSingleTask(
           }
         }
 
-        // Step 2: Create calendar event (only if slot is free)
         if (!calendarNote) {
           try {
             const event = await calendarService.createEvent(user.id, {
@@ -203,7 +201,7 @@ async function processSingleTask(
   ]);
 
   if (duplicates.length > 0) {
-    pendingTasks.set(jid, { userId: user.id, parsed });
+    pendingTasks.set(userId, { userId: user.id, parsed });
     const dupList = duplicates
       .map((d) => `• "${d.title}" (${Math.round(d.similarity_score * 100)}% match)`)
       .join('\n');
@@ -218,7 +216,7 @@ async function processSingleTask(
 async function processAddInBackground(
   sock: WASocket,
   replyJid: string,
-  jid: string,
+  userId: string,
   input: string,
   user: { id: string; name: string },
   categories: { id: string; name: string }[]
@@ -227,18 +225,15 @@ async function processAddInBackground(
   try {
     const categoryNames = categories.map(c => c.name);
 
-    // Step 1: Split into individual tasks
     const taskInputs = await aiService.splitMultiTaskInput(input);
     const isMulti = taskInputs.length > 1;
     console.log(`[BG] Split into ${taskInputs.length} task(s) (${Date.now() - t0}ms)`);
 
-    // Step 2: Parse each task in parallel
     const parsedTasks = await Promise.all(
       taskInputs.map(t => aiService.parseNaturalLanguage(t, categoryNames))
     );
     console.log(`[BG] Parsed ${parsedTasks.length} task(s) (${Date.now() - t0}ms)`);
 
-    // Step 3: Process each task
     const replies: string[] = [];
     for (const parsed of parsedTasks) {
       if (isMulti) {
@@ -249,34 +244,32 @@ async function processAddInBackground(
         const task = await taskService.createTask(user.id, parsed, categoryId);
         replies.push(formatTaskReply(task));
       } else {
-        const reply = await processSingleTask(parsed, user, jid);
+        const reply = await processSingleTask(parsed, user, userId);
         replies.push(reply);
       }
     }
 
     if (isMulti) {
-      await sendReply(sock, replyJid, `📋 *${parsedTasks.length} tasks added:*\n\n${replies.join('\n\n')}`);
+      await sendReply(sock, replyJid, `📋 *${parsedTasks.length} tasks added:*\n\n${replies.join('\n\n')}`, userId);
     } else {
-      await sendReply(sock, replyJid, replies[0]);
+      await sendReply(sock, replyJid, replies[0], userId);
     }
 
     console.log(`[BG] DONE ✅ ${parsedTasks.length} task(s) — ${Date.now() - t0}ms`);
   } catch (err) {
     console.error('[BG] ERROR:', err);
     try {
-      await sendReply(sock, replyJid, '❌ Failed to add task. Try again.');
+      await sendReply(sock, replyJid, '❌ Failed to add task. Try again.', userId);
     } catch { /* give up */ }
   }
 }
 
-// ─── Shared command processing (used by both text + voice) ──────────
+// ─── Shared command processing ──────────────────────────────────────
 
-/** Process a text input through command parsing + AI intent classification.
- *  @param ackSent - if true, skip sending "⏳ Adding..." acks (voice notes already sent one) */
 async function processTextInput(
   sock: WASocket,
   replyJid: string,
-  jid: string,
+  userId: string,
   text: string,
   user: { id: string; name: string },
   t0: number,
@@ -289,13 +282,13 @@ async function processTextInput(
 
   switch (command.type) {
     case 'help':
-      await sendReply(sock, replyJid, formatHelp(isCallEscalationEnabled()));
+      await sendReply(sock, replyJid, formatHelp(isCallEscalationEnabled()), userId);
       break;
 
     case 'meet': {
-      if (!ackSent) await sendReply(sock, replyJid, '⏳ Scheduling meeting...');
+      if (!ackSent) await sendReply(sock, replyJid, '⏳ Scheduling meeting...', userId);
       categories = await taskService.getCategories(user.id);
-      processAddInBackground(sock, replyJid, jid, `meeting ${command.text}`, user, categories);
+      processAddInBackground(sock, replyJid, userId, `meeting ${command.text}`, user, categories);
       return;
     }
 
@@ -306,26 +299,26 @@ async function processTextInput(
         const body = input.replace(/^me\s+(?:to\s+)?/i, '');
         input = `remind me to ${body}`;
       }
-      if (!ackSent) await sendReply(sock, replyJid, '⏳ Adding...');
+      if (!ackSent) await sendReply(sock, replyJid, '⏳ Adding...', userId);
       categories = await taskService.getCategories(user.id);
-      processAddInBackground(sock, replyJid, jid, input, user, categories);
+      processAddInBackground(sock, replyJid, userId, input, user, categories);
       return;
     }
 
     case 'list': {
       const tasks = await taskService.getTasksForWhatsApp(user.id, command.filter);
-      cacheTaskList(replyJid, tasks);
-      await sendReply(sock, replyJid, formatTaskList(tasks));
+      cacheTaskList(userId, tasks);
+      await sendReply(sock, replyJid, formatTaskList(tasks), userId);
       break;
     }
 
     case 'done': {
-      const task = await resolveTaskByNumber(user.id, replyJid, command.taskNumber);
+      const task = await resolveTaskByNumber(userId, command.taskNumber);
       if (!task) {
-        await sendReply(sock, replyJid, `❌ Task #${command.taskNumber} not found. Use "list" to see tasks.`);
+        await sendReply(sock, replyJid, `❌ Task #${command.taskNumber} not found. Use "list" to see tasks.`, userId);
       } else {
         await taskService.markComplete(task.id);
-        await sendReply(sock, replyJid, `✅ Completed: *${task.title}*`);
+        await sendReply(sock, replyJid, `✅ Completed: *${task.title}*`, userId);
       }
       break;
     }
@@ -333,44 +326,42 @@ async function processTextInput(
     case 'done_search': {
       const task = await taskService.findTaskByKeywords(user.id, command.search);
       if (!task) {
-        await sendReply(sock, replyJid, `❌ No active task matching "${command.search}" found.`);
+        await sendReply(sock, replyJid, `❌ No active task matching "${command.search}" found.`, userId);
       } else {
         await taskService.markComplete(task.id);
-        await sendReply(sock, replyJid, `✅ Completed: *${task.title}*`);
+        await sendReply(sock, replyJid, `✅ Completed: *${task.title}*`, userId);
       }
       break;
     }
 
     case 'delete': {
-      const task = await resolveTaskByNumber(user.id, replyJid, command.taskNumber);
+      const task = await resolveTaskByNumber(userId, command.taskNumber);
       if (!task) {
-        await sendReply(sock, replyJid, `❌ Task #${command.taskNumber} not found. Use "list" to see tasks.`);
+        await sendReply(sock, replyJid, `❌ Task #${command.taskNumber} not found. Use "list" to see tasks.`, userId);
       } else {
-        // Delete via backend API — handles calendar cleanup with guardrails
         try {
           await calendarService.deleteTaskWithCalendar(task.id);
         } catch {
-          // Fallback to direct DB delete if backend is unreachable
           await taskService.deleteTask(task.id);
         }
-        await sendReply(sock, replyJid, `🗑️ Deleted: *${task.title}*`);
+        await sendReply(sock, replyJid, `🗑️ Deleted: *${task.title}*`, userId);
       }
       break;
     }
 
     case 'move': {
-      const task = await resolveTaskByNumber(user.id, replyJid, command.taskNumber);
+      const task = await resolveTaskByNumber(userId, command.taskNumber);
       if (!task) {
-        await sendReply(sock, replyJid, `❌ Task #${command.taskNumber} not found. Use "list" to see tasks.`);
+        await sendReply(sock, replyJid, `❌ Task #${command.taskNumber} not found. Use "list" to see tasks.`, userId);
       } else {
         try {
           const newDate = await aiService.parseMoveDate(command.dateText);
           const updated = await taskService.moveTask(task.id, user.id, newDate);
           const formatted = new Date(newDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-          await sendReply(sock, replyJid, `📅 *${updated.title}* moved to ${formatted}`);
+          await sendReply(sock, replyJid, `📅 *${updated.title}* moved to ${formatted}`, userId);
         } catch (err) {
           console.error('[HANDLER] Move task error:', err);
-          await sendReply(sock, replyJid, '❌ Could not move task. Try again.');
+          await sendReply(sock, replyJid, '❌ Could not move task. Try again.', userId);
         }
       }
       break;
@@ -379,16 +370,16 @@ async function processTextInput(
     case 'move_search': {
       const task = await taskService.findTaskByKeywords(user.id, command.search);
       if (!task) {
-        await sendReply(sock, replyJid, `❌ No active task matching "${command.search}" found.`);
+        await sendReply(sock, replyJid, `❌ No active task matching "${command.search}" found.`, userId);
       } else {
         try {
           const newDate = await aiService.parseMoveDate(command.dateText);
           const updated = await taskService.moveTask(task.id, user.id, newDate);
           const formatted = new Date(newDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-          await sendReply(sock, replyJid, `📅 *${updated.title}* moved to ${formatted}`);
+          await sendReply(sock, replyJid, `📅 *${updated.title}* moved to ${formatted}`, userId);
         } catch (err) {
           console.error('[HANDLER] Move task error:', err);
-          await sendReply(sock, replyJid, '❌ Could not move task. Try again.');
+          await sendReply(sock, replyJid, '❌ Could not move task. Try again.', userId);
         }
       }
       break;
@@ -396,18 +387,18 @@ async function processTextInput(
 
     case 'categories': {
       const tree = await taskService.getCategoryTree(user.id);
-      await sendReply(sock, replyJid, tree.length === 0 ? '📂 No categories.' : formatCategoryTree(tree));
+      await sendReply(sock, replyJid, tree.length === 0 ? '📂 No categories.' : formatCategoryTree(tree), userId);
       break;
     }
 
     case 'video_link': {
       try {
         const saved = await videoService.saveVideo(user.id, command.url, command.platform);
-        await sendReply(sock, replyJid, `📥 Added to *Videos*\n\nType *videos* to see your list.`);
+        await sendReply(sock, replyJid, `📥 Added to *Videos*\n\nType *videos* to see your list.`, userId);
         videoService.enrichVideoTitle(saved.id, command.url, command.platform);
       } catch (err) {
         console.error('[HANDLER] Video save error:', err);
-        await sendReply(sock, replyJid, '❌ Failed to save video. Try again.');
+        await sendReply(sock, replyJid, '❌ Failed to save video. Try again.', userId);
       }
       break;
     }
@@ -417,22 +408,22 @@ async function processTextInput(
         const vids = await videoService.getVideos(user.id);
         const video = vids[command.taskNumber - 1];
         if (!video) {
-          await sendReply(sock, replyJid, `❌ Video #${command.taskNumber} not found. Use "videos" to see your list.`);
+          await sendReply(sock, replyJid, `❌ Video #${command.taskNumber} not found. Use "videos" to see your list.`, userId);
         } else {
           await videoService.markVideoWatched(video.id);
           const displayTitle = video.title.replace(/^\[(YT|IG)\]\s*/, '');
-          await sendReply(sock, replyJid, `✅ Watched: *${displayTitle}*`);
+          await sendReply(sock, replyJid, `✅ Watched: *${displayTitle}*`, userId);
         }
       } else {
         const vids = await videoService.getVideos(user.id);
-        await sendReply(sock, replyJid, formatVideoList(vids));
+        await sendReply(sock, replyJid, formatVideoList(vids), userId);
       }
       break;
     }
 
     case 'meetings': {
       const meetings = await taskService.getMeetings(user.id, command.filter);
-      await sendReply(sock, replyJid, formatMeetingList(meetings));
+      await sendReply(sock, replyJid, formatMeetingList(meetings), userId);
       break;
     }
 
@@ -442,72 +433,71 @@ async function processTextInput(
         taskService.getTasksForWhatsApp(user.id, 'today'),
         taskService.getUpcomingReminders(user.id),
       ]);
-      await sendReply(sock, replyJid, formatSummary(stats, todayTasks, upcomingReminders));
+      await sendReply(sock, replyJid, formatSummary(stats, todayTasks, upcomingReminders), userId);
       break;
     }
 
     case 'unknown': {
-      // AI intent classification fallback
       console.log(`[HANDLER] Classifying intent for: "${command.text.slice(0, 50)}"`);
       const classified = await aiService.classifyIntent(command.text);
       console.log(`[HANDLER] AI classified: ${classified.intent} (${Date.now() - t0}ms)`);
 
       switch (classified.intent) {
         case 'add': {
-          if (!ackSent) await sendReply(sock, replyJid, '⏳ Adding...');
+          if (!ackSent) await sendReply(sock, replyJid, '⏳ Adding...', userId);
           categories = await taskService.getCategories(user.id);
-          processAddInBackground(sock, replyJid, jid, classified.text, user, categories);
+          processAddInBackground(sock, replyJid, userId, classified.text, user, categories);
           return;
         }
         case 'meet': {
-          if (!ackSent) await sendReply(sock, replyJid, '⏳ Scheduling meeting...');
+          if (!ackSent) await sendReply(sock, replyJid, '⏳ Scheduling meeting...', userId);
           categories = await taskService.getCategories(user.id);
-          processAddInBackground(sock, replyJid, jid, classified.text, user, categories);
+          processAddInBackground(sock, replyJid, userId, classified.text, user, categories);
           return;
         }
         case 'remind': {
-          if (!ackSent) await sendReply(sock, replyJid, '⏳ Adding...');
+          if (!ackSent) await sendReply(sock, replyJid, '⏳ Adding...', userId);
           categories = await taskService.getCategories(user.id);
-          processAddInBackground(sock, replyJid, jid, `remind me to ${classified.text}`, user, categories);
+          processAddInBackground(sock, replyJid, userId, `remind me to ${classified.text}`, user, categories);
           return;
         }
         case 'done': {
           const task = await taskService.findTaskByKeywords(user.id, classified.search);
           if (!task) {
-            await sendReply(sock, replyJid, `❌ No active task matching "${classified.search}" found.`);
+            await sendReply(sock, replyJid, `❌ No active task matching "${classified.search}" found.`, userId);
           } else {
             await taskService.markComplete(task.id);
-            await sendReply(sock, replyJid, `✅ Completed: *${task.title}*`);
+            await sendReply(sock, replyJid, `✅ Completed: *${task.title}*`, userId);
           }
           break;
         }
         case 'move': {
           const task = await taskService.findTaskByKeywords(user.id, classified.search);
           if (!task) {
-            await sendReply(sock, replyJid, `❌ No active task matching "${classified.search}" found.`);
+            await sendReply(sock, replyJid, `❌ No active task matching "${classified.search}" found.`, userId);
           } else {
             try {
               const newDate = await aiService.parseMoveDate(classified.dateText);
               const updated = await taskService.moveTask(task.id, user.id, newDate);
               const formatted = new Date(newDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-              await sendReply(sock, replyJid, `📅 *${updated.title}* moved to ${formatted}`);
+              await sendReply(sock, replyJid, `📅 *${updated.title}* moved to ${formatted}`, userId);
             } catch (err) {
               console.error('[HANDLER] Move task error:', err);
-              await sendReply(sock, replyJid, '❌ Could not move task. Try again.');
+              await sendReply(sock, replyJid, '❌ Could not move task. Try again.', userId);
             }
           }
           break;
         }
         case 'query': {
           const tasks = await taskService.getTasksForWhatsApp(user.id, classified.timeFilter, classified.search);
-          cacheTaskList(replyJid, tasks);
-          await sendReply(sock, replyJid, formatQueryResult(tasks, classified.search, classified.timeFilter));
+          cacheTaskList(userId, tasks);
+          await sendReply(sock, replyJid, formatQueryResult(tasks, classified.search, classified.timeFilter), userId);
           break;
         }
         case 'list': {
           const tasks = await taskService.getTasksForWhatsApp(user.id, classified.timeFilter);
-          cacheTaskList(replyJid, tasks);
-          await sendReply(sock, replyJid, formatTaskList(tasks));
+          cacheTaskList(userId, tasks);
+          await sendReply(sock, replyJid, formatTaskList(tasks), userId);
           break;
         }
         case 'summary': {
@@ -516,134 +506,132 @@ async function processTextInput(
             taskService.getTasksForWhatsApp(user.id, 'today'),
             taskService.getUpcomingReminders(user.id),
           ]);
-          await sendReply(sock, replyJid, formatSummary(stats2, todayTasks2, upcomingReminders2));
+          await sendReply(sock, replyJid, formatSummary(stats2, todayTasks2, upcomingReminders2), userId);
           break;
         }
         default:
           await sendReply(sock, replyJid,
-            `I didn't understand that.\n\nUse *add* [task] to create a task, or send *help* for all commands.`
+            `I didn't understand that.\n\nUse *add* [task] to create a task, or send *help* for all commands.`,
+            userId
           );
       }
       break;
     }
   }
 
-  // Acknowledge recent reminders (any interaction = user is active)
   taskService.acknowledgeReminders(user.id).catch(() => {});
 }
 
-// ─── Main entry point ───────────────────────────────────────────────
+// ─── Factory: create a per-user message handler ─────────────────────
 
-export async function handleMessage(
-  sock: WASocket,
-  msg: proto.IWebMessageInfo
-): Promise<void> {
-  const jid = msg.key?.remoteJid;
-  if (!jid) return;
+export function createMessageHandler(userId: string): (sock: WASocket, msg: proto.IWebMessageInfo) => Promise<void> {
+  return async function handleMessage(sock: WASocket, msg: proto.IWebMessageInfo): Promise<void> {
+    const jid = msg.key?.remoteJid;
+    if (!jid) return;
 
-  const text =
-    msg.message?.conversation ||
-    msg.message?.extendedTextMessage?.text ||
-    '';
+    const text =
+      msg.message?.conversation ||
+      msg.message?.extendedTextMessage?.text ||
+      '';
 
-  const isVoiceNote = !!(msg.message?.audioMessage?.ptt);
+    const isVoiceNote = !!(msg.message?.audioMessage?.ptt);
 
-  if (!text.trim() && !isVoiceNote) return;
+    if (!text.trim() && !isVoiceNote) return;
 
-  const t0 = Date.now();
+    const t0 = Date.now();
+    // Self-chat messages arrive from @lid JIDs, but Baileys can only send to @s.whatsapp.net
+    // Use the session's myPhoneJid (already normalized) for replies
+    const myJid = getMyPhoneJid(userId);
+    const replyJid = jid.endsWith('@lid') && myJid ? myJid : jid;
 
-  const replyJid = jid.endsWith('@lid') && getMyPhoneJid()
-    ? getMyPhoneJid()!
-    : jid;
-  console.log(`[HANDLER] START — ${isVoiceNote ? '[voice note]' : `text="${text.slice(0, 50)}"`} from=${jid} replyTo=${replyJid}`);
+    console.log(`[HANDLER] START — ${isVoiceNote ? '[voice note]' : `text="${text.slice(0, 50)}"`} from=${jid} replyTo=${replyJid}`);
 
-  try {
-    // Step 1: Get user (cached)
-    const pushName = msg.pushName || undefined;
-    let user = getCachedUser(replyJid);
-
-    if (!user) {
-      const freshUser = await taskService.getOrCreateUser(replyJid, pushName);
-      user = { id: freshUser.id, name: freshUser.name };
-      userCache.set(replyJid, { user, ts: Date.now() });
-    }
-
-    // Handle pending dedup confirmation (yes/no) — text messages
-    if (!isVoiceNote && pendingTasks.has(jid)) {
-      const lower = text.trim().toLowerCase().replace(/[.\s]+$/, '');
-      if (['yes', 'y', 'yeah', 'yep', 'yea', 'sure'].includes(lower)) {
-        const { userId, parsed } = pendingTasks.get(jid)!;
-        pendingTasks.delete(jid);
-        const task = await taskService.createTaskFromParsed(userId, parsed);
-        await sendReply(sock, replyJid, `✅ *${task.title}* added`);
-        return;
-      } else if (['no', 'n', 'nah', 'nope', 'cancel'].includes(lower)) {
-        pendingTasks.delete(jid);
-        await sendReply(sock, replyJid, '❌ Cancelled.');
-        return;
-      }
-      // Not a yes/no — clear pending and continue as normal command
-      pendingTasks.delete(jid);
-    }
-
-    // ── VOICE NOTE: transcribe → then process same as text ──────────
-    if (isVoiceNote) {
-      if (env.AI_PROVIDER === 'ollama') {
-        await sendReply(sock, replyJid, '⚠️ Voice notes require OpenAI. Switch AI_PROVIDER to "openai" to use this feature.');
-        return;
-      }
-
-      await sendReply(sock, replyJid, '🎤 Processing voice note...');
-
-      let transcribed: string | null;
-      try {
-        transcribed = await transcribeVoiceMessage(msg);
-      } catch (err) {
-        console.error('[HANDLER] Transcription error:', err);
-        await sendReply(sock, replyJid, '❌ Could not transcribe voice note. Try again.');
-        return;
-      }
-
-      if (!transcribed) {
-        await sendReply(sock, replyJid, '❌ Could not transcribe voice note. Try again.');
-        return;
-      }
-
-      console.log(`[HANDLER] Transcribed: "${transcribed.slice(0, 80)}"`);
-
-      // Check if this voice note is a yes/no reply to a dedup confirmation
-      if (pendingTasks.has(jid)) {
-        const lower = transcribed.trim().toLowerCase().replace(/[.\s]+$/, '');
-        if (['yes', 'y', 'yeah', 'yep', 'yea', 'sure'].includes(lower)) {
-          const { userId, parsed } = pendingTasks.get(jid)!;
-          pendingTasks.delete(jid);
-          const task = await taskService.createTaskFromParsed(userId, parsed);
-          await sendReply(sock, replyJid, `✅ *${task.title}* added`);
-          console.log(`[HANDLER] DONE (voice dedup confirmed)`);
-          return;
-        } else if (['no', 'n', 'nah', 'nope', 'cancel'].includes(lower)) {
-          pendingTasks.delete(jid);
-          await sendReply(sock, replyJid, '❌ Cancelled.');
-          console.log(`[HANDLER] DONE (voice dedup cancelled)`);
+    try {
+      // Get user (cached by userId)
+      let user = getCachedUser(userId);
+      if (!user) {
+        const freshUser = await taskService.getUserById(userId);
+        if (!freshUser) {
+          console.error(`[HANDLER] User ${userId} not found in DB`);
           return;
         }
-        // Not a yes/no — clear pending and treat as new input
-        pendingTasks.delete(jid);
+        user = { id: freshUser.id, name: freshUser.name };
+        userCache.set(userId, { user, ts: Date.now() });
       }
 
-      // Feed transcribed text through the SAME command + intent pipeline as text
-      await processTextInput(sock, replyJid, jid, transcribed, user, t0, /* ackSent */ true);
-      console.log(`[HANDLER] DONE ✅ (voice note) — ${Date.now() - t0}ms`);
-      return;
-    }
+      // Handle pending dedup confirmation (yes/no) — text messages
+      if (!isVoiceNote && pendingTasks.has(userId)) {
+        const lower = text.trim().toLowerCase().replace(/[.\s]+$/, '');
+        if (['yes', 'y', 'yeah', 'yep', 'yea', 'sure'].includes(lower)) {
+          const { userId: uid, parsed } = pendingTasks.get(userId)!;
+          pendingTasks.delete(userId);
+          const task = await taskService.createTaskFromParsed(uid, parsed);
+          await sendReply(sock, replyJid, `✅ *${task.title}* added`, userId);
+          return;
+        } else if (['no', 'n', 'nah', 'nope', 'cancel'].includes(lower)) {
+          pendingTasks.delete(userId);
+          await sendReply(sock, replyJid, '❌ Cancelled.', userId);
+          return;
+        }
+        pendingTasks.delete(userId);
+      }
 
-    // ── TEXT MESSAGE: process through shared pipeline ─────────────────
-    await processTextInput(sock, replyJid, jid, text, user, t0, /* ackSent */ false);
-    console.log(`[HANDLER] DONE ✅ — ${Date.now() - t0}ms`);
-  } catch (err) {
-    console.error('[HANDLER] ERROR:', err);
-    try {
-      await sendReply(sock, replyJid, '⚠️ Something went wrong. Try again.');
-    } catch { /* give up */ }
-  }
+      // ── VOICE NOTE ──────────────────────────────────────────────────
+      if (isVoiceNote) {
+        if (env.AI_PROVIDER === 'ollama') {
+          await sendReply(sock, replyJid, '⚠️ Voice notes require OpenAI. Switch AI_PROVIDER to "openai" to use this feature.', userId);
+          return;
+        }
+
+        await sendReply(sock, replyJid, '🎤 Processing voice note...', userId);
+
+        let transcribed: string | null;
+        try {
+          transcribed = await transcribeVoiceMessage(msg);
+        } catch (err) {
+          console.error('[HANDLER] Transcription error:', err);
+          await sendReply(sock, replyJid, '❌ Could not transcribe voice note. Try again.', userId);
+          return;
+        }
+
+        if (!transcribed) {
+          await sendReply(sock, replyJid, '❌ Could not transcribe voice note. Try again.', userId);
+          return;
+        }
+
+        console.log(`[HANDLER] Transcribed: "${transcribed.slice(0, 80)}"`);
+
+        if (pendingTasks.has(userId)) {
+          const lower = transcribed.trim().toLowerCase().replace(/[.\s]+$/, '');
+          if (['yes', 'y', 'yeah', 'yep', 'yea', 'sure'].includes(lower)) {
+            const { userId: uid, parsed } = pendingTasks.get(userId)!;
+            pendingTasks.delete(userId);
+            const task = await taskService.createTaskFromParsed(uid, parsed);
+            await sendReply(sock, replyJid, `✅ *${task.title}* added`, userId);
+            console.log(`[HANDLER] DONE (voice dedup confirmed)`);
+            return;
+          } else if (['no', 'n', 'nah', 'nope', 'cancel'].includes(lower)) {
+            pendingTasks.delete(userId);
+            await sendReply(sock, replyJid, '❌ Cancelled.', userId);
+            console.log(`[HANDLER] DONE (voice dedup cancelled)`);
+            return;
+          }
+          pendingTasks.delete(userId);
+        }
+
+        await processTextInput(sock, replyJid, userId, transcribed, user, t0, true);
+        console.log(`[HANDLER] DONE ✅ (voice note) — ${Date.now() - t0}ms`);
+        return;
+      }
+
+      // ── TEXT MESSAGE ─────────────────────────────────────────────────
+      await processTextInput(sock, replyJid, userId, text, user, t0, false);
+      console.log(`[HANDLER] DONE ✅ — ${Date.now() - t0}ms`);
+    } catch (err) {
+      console.error('[HANDLER] ERROR:', err);
+      try {
+        await sendReply(sock, replyJid, '⚠️ Something went wrong. Try again.', userId);
+      } catch { /* give up */ }
+    }
+  };
 }

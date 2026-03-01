@@ -27,7 +27,6 @@ export function useTasks(userId: string | undefined, filters: TaskFilters = {}) 
     try {
       const res = await api<{ data: Task[] }>("/tasks", {
         params: {
-          user_id: userId,
           category_id: filters.category_id,
           priority: filters.priority,
           status: filters.status,

@@ -6,7 +6,7 @@ const router = Router();
 // GET /api/categories?user_id=...
 router.get('/', async (req, res, next) => {
   try {
-    const userId = req.query.user_id as string;
+    const userId = req.appUserId || (req.query.user_id as string);
     if (!userId) {
       res.status(400).json({ error: 'user_id is required' });
       return;
@@ -21,7 +21,7 @@ router.get('/', async (req, res, next) => {
 // GET /api/categories/tree?user_id=... — hierarchical tree
 router.get('/tree', async (req, res, next) => {
   try {
-    const userId = req.query.user_id as string;
+    const userId = req.appUserId || (req.query.user_id as string);
     if (!userId) {
       res.status(400).json({ error: 'user_id is required' });
       return;
@@ -36,16 +36,24 @@ router.get('/tree', async (req, res, next) => {
 // POST /api/categories
 router.post('/', async (req, res, next) => {
   try {
-    const category = await categoryService.createCategory(req.body);
+    const body = req.appUserId ? { ...req.body, user_id: req.appUserId } : req.body;
+    const category = await categoryService.createCategory(body);
     res.status(201).json({ data: category });
   } catch (err) {
     next(err);
   }
 });
 
-// PATCH /api/categories/:id
+// PATCH /api/categories/:id — ownership check
 router.patch('/:id', async (req, res, next) => {
   try {
+    if (req.appUserId) {
+      const existing = await categoryService.getCategoryById(req.params.id);
+      if (!existing || existing.user_id !== req.appUserId) {
+        res.status(404).json({ error: 'Category not found' });
+        return;
+      }
+    }
     const category = await categoryService.updateCategory(req.params.id, req.body);
     res.json({ data: category });
   } catch (err) {
@@ -53,9 +61,16 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
-// DELETE /api/categories/:id
+// DELETE /api/categories/:id — ownership check
 router.delete('/:id', async (req, res, next) => {
   try {
+    if (req.appUserId) {
+      const existing = await categoryService.getCategoryById(req.params.id);
+      if (!existing || existing.user_id !== req.appUserId) {
+        res.status(404).json({ error: 'Category not found' });
+        return;
+      }
+    }
     await categoryService.deleteCategory(req.params.id);
     res.status(204).send();
   } catch (err) {

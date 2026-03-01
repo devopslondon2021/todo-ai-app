@@ -17,6 +17,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3001),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
   GOOGLE_OAUTH_REDIRECT_URI: z.string().default('http://localhost:3000/auth/google/callback'),
+  WHATSAPP_BOT_URL: z.string().default('http://localhost:3002'),
 });
 
 const parsed = envSchema.safeParse(process.env);

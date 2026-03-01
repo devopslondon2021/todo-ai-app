@@ -7,6 +7,7 @@ export interface User {
   whatsapp_jid: string | null;
   phone_number: string | null;
   name: string;
+  email?: string | null;
   api_key: string | null;
   google_calendar_connected?: boolean;
   created_at: string;

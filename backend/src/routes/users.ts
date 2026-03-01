@@ -3,6 +3,24 @@ import * as userService from '../services/userService';
 
 const router = Router();
 
+// POST /api/users/me — get or create app user from JWT (protected)
+router.post('/me', async (req, res, next) => {
+  try {
+    if (!req.authUserId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const user = await userService.getOrCreateByAuthId(
+      req.authUserId,
+      req.authEmail || '',
+      req.authMeta,
+    );
+    res.json({ data: user });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/users/default — get or create the default user
 router.get('/default', async (_req, res, next) => {
   try {
@@ -27,9 +45,13 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// GET /api/users/:id/api-key
+// GET /api/users/:id/api-key — ownership required
 router.get('/:id/api-key', async (req, res, next) => {
   try {
+    if (req.appUserId && req.appUserId !== req.params.id) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     const apiKey = await userService.getApiKey(req.params.id);
     if (!apiKey) {
       res.status(404).json({ error: 'User not found or no API key' });
@@ -41,9 +63,13 @@ router.get('/:id/api-key', async (req, res, next) => {
   }
 });
 
-// POST /api/users/:id/api-key/regenerate
+// POST /api/users/:id/api-key/regenerate — ownership required
 router.post('/:id/api-key/regenerate', async (req, res, next) => {
   try {
+    if (req.appUserId && req.appUserId !== req.params.id) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     const newKey = await userService.regenerateApiKey(req.params.id);
     res.json({ data: { api_key: newKey } });
   } catch (err) {

@@ -22,4 +22,5 @@ export const env = {
   TWILIO_PHONE_NUMBER: process.env.TWILIO_PHONE_NUMBER || '',
   CALL_ESCALATION_DELAY_MIN: parseInt(process.env.CALL_ESCALATION_DELAY_MIN || '5', 10),
   BACKEND_URL: (process.env.BACKEND_URL || 'http://localhost:3001').replace(/\/+$/, ''),
+  BOT_API_PORT: parseInt(process.env.BOT_API_PORT || '3002', 10),
 };

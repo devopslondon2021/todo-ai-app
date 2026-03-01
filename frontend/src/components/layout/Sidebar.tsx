@@ -16,9 +16,11 @@ import {
   Trash2,
   X,
   Check,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/useAppStore";
+import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { DEFAULT_CATEGORY_COLORS } from "@/lib/constants";
 import { startOfDay, endOfDay } from "date-fns";
@@ -61,7 +63,6 @@ function CategoryForm({
       await api("/categories", {
         method: "POST",
         body: {
-          user_id: userId,
           name: name.trim(),
           color,
           icon: "tag",
@@ -260,6 +261,7 @@ export function Sidebar({
   onSettingsClick,
 }: SidebarProps) {
   const { filters, setFilter, clearFilters, viewMode, setViewMode } = useAppStore();
+  const { signOut } = useAuth();
   const [showCatCreate, setShowCatCreate] = useState(false);
 
   function getActiveId(): string {
@@ -431,13 +433,20 @@ export function Sidebar({
       </div>
 
       {/* Bottom actions */}
-      <div className="border-t border-border/30 px-2.5 py-2">
+      <div className="border-t border-border/30 px-2.5 py-2 space-y-0.5">
         <button
           onClick={onSettingsClick}
           className="flex items-center gap-2 rounded-[var(--radius-sm)] px-3 py-1.5 text-[12px] font-medium text-text-secondary hover:text-text hover:bg-surface-hover cursor-pointer w-full transition-colors duration-150"
         >
           <Settings size={14} aria-hidden="true" />
           Settings
+        </button>
+        <button
+          onClick={signOut}
+          className="flex items-center gap-2 rounded-[var(--radius-sm)] px-3 py-1.5 text-[12px] font-medium text-text-secondary hover:text-danger hover:bg-danger/8 cursor-pointer w-full transition-colors duration-150"
+        >
+          <LogOut size={14} aria-hidden="true" />
+          Sign Out
         </button>
       </div>
     </aside>

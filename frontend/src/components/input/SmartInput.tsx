@@ -50,7 +50,6 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
         method: "POST",
         body: {
           text: text.trim(),
-          user_id: userId,
           category_names: categories.map((c) => c.name),
         },
       });
@@ -88,7 +87,6 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
         const res = await api<MeetingResponse>("/tasks/meeting", {
           method: "POST",
           body: {
-            user_id: userId,
             title: task.title,
             description: task.description,
             priority: task.priority,
@@ -134,7 +132,7 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
         try {
           const avail = await api<AvailabilityCheckResponse>("/tasks/check-availability", {
             method: "POST",
-            body: { user_id: userId, due_date: task.due_date, duration_minutes: 30 },
+            body: { due_date: task.due_date, duration_minutes: 30 },
           });
 
           if (!avail.free) {
@@ -155,7 +153,6 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
       await api("/tasks", {
         method: "POST",
         body: {
-          user_id: userId,
           title: task.title,
           description: task.description,
           priority: task.priority,
@@ -185,7 +182,6 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
       await api("/tasks", {
         method: "POST",
         body: {
-          user_id: userId,
           title: task.title,
           description: task.description,
           priority: task.priority,
@@ -216,7 +212,6 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
         await api("/tasks", {
           method: "POST",
           body: {
-            user_id: userId,
             title: task.title,
             description: task.description,
             priority: task.priority,
@@ -242,7 +237,6 @@ export function SmartInput({ userId, user, categories, categoryTree, onTaskCreat
       const res = await api<MeetingResponse>("/tasks/meeting", {
         method: "POST",
         body: {
-          user_id: userId,
           title: task.title,
           description: task.description,
           priority: task.priority,

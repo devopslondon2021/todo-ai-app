@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { X, Bot, Cpu, Mic, Copy, Eye, EyeOff, RefreshCw, ExternalLink, Calendar, Loader2, Save } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { X, Bot, Cpu, Mic, Copy, Eye, EyeOff, RefreshCw, ExternalLink, Calendar, Loader2, Save, Smartphone, Wifi, WifiOff } from "lucide-react";
+import QRCode from "react-qr-code";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/Toast";
@@ -46,6 +47,14 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
   const [gcClientSecret, setGcClientSecret] = useState("");
   const [credSaving, setCredSaving] = useState(false);
 
+  // WhatsApp state
+  type WaStatus = "disconnected" | "connecting" | "qr" | "connected";
+  const [waStatus, setWaStatus] = useState<WaStatus>("disconnected");
+  const [waQr, setWaQr] = useState<string | null>(null);
+  const [waJid, setWaJid] = useState<string | null>(null);
+  const [waLoading, setWaLoading] = useState(false);
+  const waEventSourceRef = useRef<EventSource | null>(null);
+
   const fetchApiKey = useCallback(() => {
     if (!userId || userId.startsWith("demo")) return;
     setKeyLoading(true);
@@ -57,7 +66,7 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
 
   const fetchCalendarStatus = useCallback(() => {
     if (!userId || userId.startsWith("demo")) return;
-    api<{ data: { connected: boolean; configured: boolean } }>(`/calendar/status`, { params: { user_id: userId } })
+    api<{ data: { connected: boolean; configured: boolean } }>(`/calendar/status`)
       .then((res) => {
         setCalendarConnected(res.data.connected);
         setCalendarConfigured(res.data.configured);
@@ -68,6 +77,19 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
       });
   }, [userId]);
 
+  const fetchWaStatus = useCallback(() => {
+    if (!userId || userId.startsWith("demo")) return;
+    api<{ data: { status: string; jid: string | null; connected: boolean } }>("/whatsapp/status")
+      .then((res) => {
+        setWaJid(res.data.jid);
+        setWaStatus(res.data.connected ? "connected" : "disconnected");
+      })
+      .catch(() => {
+        setWaStatus("disconnected");
+        setWaJid(null);
+      });
+  }, [userId]);
+
   useEffect(() => {
     if (open) {
       api<{ data: { ai_provider: string } }>("/settings")
@@ -75,9 +97,14 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
         .catch(() => {});
       fetchApiKey();
       fetchCalendarStatus();
+      fetchWaStatus();
       setKeyVisible(false);
+    } else {
+      // Clean up SSE on modal close
+      waEventSourceRef.current?.close();
+      waEventSourceRef.current = null;
     }
-  }, [open, fetchApiKey, fetchCalendarStatus]);
+  }, [open, fetchApiKey, fetchCalendarStatus, fetchWaStatus]);
 
   // Listen for popup callback message
   useEffect(() => {
@@ -131,7 +158,7 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
   async function handleConnectCalendar() {
     setCalendarLoading(true);
     try {
-      const res = await api<{ data: { url: string } }>("/calendar/auth-url", { params: { user_id: userId } });
+      const res = await api<{ data: { url: string } }>("/calendar/auth-url");
       // Open Google OAuth in a popup
       const width = 500;
       const height = 600;
@@ -162,7 +189,7 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
     if (!confirm("Disconnect Google Calendar? Synced meetings will remain as tasks.")) return;
     setCalendarLoading(true);
     try {
-      await api("/calendar/disconnect", { method: "DELETE", params: { user_id: userId } });
+      await api("/calendar/disconnect", { method: "DELETE" });
       setCalendarConnected(false);
       toast("Google Calendar disconnected", "success");
     } catch (err: any) {
@@ -177,7 +204,6 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
     try {
       const res = await api<{ data: { synced: number } }>("/calendar/sync", {
         method: "POST",
-        body: { user_id: userId },
       });
       toast(`Synced ${res.data.synced} events`, "success");
     } catch (err: any) {
@@ -200,7 +226,7 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
     try {
       await api("/calendar/credentials", {
         method: "POST",
-        body: { user_id: userId, client_id: gcClientId.trim(), client_secret: gcClientSecret.trim() },
+        body: { client_id: gcClientId.trim(), client_secret: gcClientSecret.trim() },
       });
       setCalendarConfigured(true);
       setGcClientId("");
@@ -211,6 +237,68 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
     } finally {
       setCredSaving(false);
     }
+  }
+
+  async function handleConnectWhatsApp() {
+    setWaLoading(true);
+    setWaQr(null);
+    try {
+      await api("/whatsapp/connect", { method: "POST" });
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Not authenticated");
+
+      waEventSourceRef.current?.close();
+      const es = new EventSource(`${BACKEND_URL}/api/whatsapp/qr-stream?token=${session.access_token}`);
+      waEventSourceRef.current = es;
+      setWaStatus("connecting");
+
+      es.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "qr") {
+          setWaQr(msg.data);
+          setWaStatus("qr");
+        } else if (msg.type === "connected") {
+          setWaJid(msg.jid ?? null);
+          setWaStatus("connected");
+          setWaQr(null);
+          es.close();
+          waEventSourceRef.current = null;
+        }
+      };
+      es.onerror = () => {
+        es.close();
+        waEventSourceRef.current = null;
+      };
+    } catch (err: any) {
+      toast(err.message || "Failed to connect WhatsApp", "error");
+      setWaStatus("disconnected");
+    } finally {
+      setWaLoading(false);
+    }
+  }
+
+  async function handleDisconnectWhatsApp() {
+    if (!confirm("Disconnect WhatsApp? You will stop receiving reminders via WhatsApp.")) return;
+    setWaLoading(true);
+    try {
+      waEventSourceRef.current?.close();
+      waEventSourceRef.current = null;
+      await api("/whatsapp/disconnect", { method: "POST" });
+      setWaStatus("disconnected");
+      setWaJid(null);
+      setWaQr(null);
+      toast("WhatsApp disconnected", "success");
+    } catch (err: any) {
+      toast(err.message || "Failed to disconnect", "error");
+    } finally {
+      setWaLoading(false);
+    }
+  }
+
+  function formatJid(jid: string): string {
+    return `+${jid.split("@")[0]}`;
   }
 
   function maskKey(key: string): string {
@@ -502,6 +590,90 @@ export function SettingsModal({ open, onClose, userId }: SettingsModalProps) {
                 </ol>
               </div>
             </>
+          )}
+        </div>
+
+        {/* Divider */}
+        <div className="border-t border-border/30 my-5" />
+
+        {/* WhatsApp Integration */}
+        <div>
+          <label className="text-[10px] font-semibold uppercase tracking-widest text-muted mb-2.5 flex items-center gap-1.5">
+            <Smartphone size={12} aria-hidden="true" />
+            WhatsApp
+          </label>
+
+          {isDemo ? (
+            <p className="text-[12px] text-muted">
+              Connect to the backend to enable WhatsApp integration.
+            </p>
+          ) : (
+            <div className="rounded-[var(--radius-lg)] border border-border/40 bg-surface/50 p-3.5">
+              {waStatus === "connected" ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-cta shrink-0" />
+                    <span className="text-[12px] text-text font-medium">Connected</span>
+                    {waJid && (
+                      <span className="text-[11px] text-muted ml-auto">{formatJid(waJid)}</span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted leading-relaxed">
+                    WhatsApp is connected. You&apos;ll receive task reminders and can manage tasks via chat.
+                  </p>
+                  <button
+                    onClick={handleDisconnectWhatsApp}
+                    disabled={waLoading}
+                    className="flex items-center gap-1.5 rounded-[var(--radius-md)] border border-danger/30 px-3 py-1.5 text-[11px] font-medium text-danger hover:bg-danger/10 transition-colors duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <WifiOff size={11} aria-hidden="true" />
+                    Disconnect
+                  </button>
+                </div>
+              ) : waStatus === "qr" && waQr ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-yellow-500 shrink-0 animate-pulse" />
+                    <span className="text-[12px] text-text font-medium">Scan QR Code</span>
+                  </div>
+                  <p className="text-[11px] text-muted leading-relaxed">
+                    Open WhatsApp &rarr; Linked Devices &rarr; Link a Device &rarr; scan this code.
+                  </p>
+                  <div className="flex justify-center p-3 rounded-[var(--radius-md)] bg-white/5 border border-border/30">
+                    <QRCode value={waQr} size={180} bgColor="transparent" fgColor="#ffffff" />
+                  </div>
+                  <button
+                    onClick={() => { waEventSourceRef.current?.close(); waEventSourceRef.current = null; setWaStatus("disconnected"); setWaQr(null); }}
+                    className="text-[11px] text-muted hover:text-text transition-colors duration-150 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : waStatus === "connecting" ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 size={13} className="animate-spin text-primary" aria-hidden="true" />
+                  <span className="text-[12px] text-muted">Waiting for QR code…</span>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-[11px] text-muted leading-relaxed">
+                    Connect WhatsApp to receive task reminders and manage tasks via chat commands.
+                  </p>
+                  <button
+                    onClick={handleConnectWhatsApp}
+                    disabled={waLoading}
+                    className="flex items-center gap-2 rounded-[var(--radius-md)] border border-border/60 bg-bg px-4 py-2 text-[12px] font-medium text-text hover:bg-surface-hover transition-colors duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed w-full justify-center"
+                  >
+                    {waLoading ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Wifi size={14} aria-hidden="true" />
+                    )}
+                    {waLoading ? "Connecting…" : "Connect WhatsApp"}
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>

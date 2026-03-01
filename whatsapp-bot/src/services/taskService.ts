@@ -107,6 +107,16 @@ export async function getOrCreateUser(jid: string, pushName?: string): Promise<U
   return user;
 }
 
+export async function getUserById(id: string): Promise<User | null> {
+  const { data, error } = await getSupabase()
+    .from('users')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
 /** Resolve category + subcategory names to a category_id (auto-creates if missing) */
 export async function resolveCategoryPath(
   userId: string,

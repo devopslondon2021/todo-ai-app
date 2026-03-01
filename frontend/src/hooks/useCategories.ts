@@ -13,12 +13,8 @@ export function useCategories(userId: string | undefined) {
     if (!userId) return;
     try {
       const [flatRes, treeRes] = await Promise.all([
-        api<{ data: Category[] }>("/categories", {
-          params: { user_id: userId },
-        }),
-        api<{ data: Category[] }>("/categories/tree", {
-          params: { user_id: userId },
-        }),
+        api<{ data: Category[] }>("/categories"),
+        api<{ data: Category[] }>("/categories/tree"),
       ]);
       setCategories(flatRes.data);
       setCategoryTree(treeRes.data);

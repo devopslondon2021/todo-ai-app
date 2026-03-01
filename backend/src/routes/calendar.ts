@@ -26,7 +26,8 @@ function calendarErrorResponse(res: Response, err: any): void {
 /** POST /api/calendar/credentials — save Google OAuth client ID + secret to DB */
 router.post('/credentials', async (req: Request, res: Response) => {
   try {
-    const { user_id, client_id, client_secret } = req.body;
+    const { client_id, client_secret } = req.body;
+    const user_id = req.appUserId || req.body.user_id;
     if (!user_id || !client_id || !client_secret) {
       return res.status(400).json({ error: 'user_id, client_id, and client_secret are required' });
     }
@@ -47,7 +48,7 @@ router.post('/credentials', async (req: Request, res: Response) => {
 /** GET /api/calendar/auth-url?user_id=xxx — returns Google OAuth URL */
 router.get('/auth-url', async (req: Request, res: Response) => {
   try {
-    const userId = req.query.user_id as string;
+    const userId = req.appUserId || (req.query.user_id as string);
     if (!userId) return res.status(400).json({ error: 'user_id is required' });
 
     const url = await calendarService.getAuthUrl(userId);
@@ -60,7 +61,8 @@ router.get('/auth-url', async (req: Request, res: Response) => {
 /** POST /api/calendar/connect — exchange auth code for tokens + initial sync */
 router.post('/connect', async (req: Request, res: Response) => {
   try {
-    const { code, user_id } = req.body;
+    const { code } = req.body;
+    const user_id = req.appUserId || req.body.user_id;
     if (!code || !user_id) {
       return res.status(400).json({ error: 'code and user_id are required' });
     }
@@ -75,7 +77,7 @@ router.post('/connect', async (req: Request, res: Response) => {
 /** POST /api/calendar/sync — trigger manual sync */
 router.post('/sync', async (req: Request, res: Response) => {
   try {
-    const { user_id } = req.body;
+    const user_id = req.appUserId || req.body.user_id;
     if (!user_id) return res.status(400).json({ error: 'user_id is required' });
 
     const result = await calendarService.syncCalendar(user_id);
@@ -88,7 +90,7 @@ router.post('/sync', async (req: Request, res: Response) => {
 /** GET /api/calendar/status?user_id=xxx — check connection status + configuration */
 router.get('/status', async (req: Request, res: Response) => {
   try {
-    const userId = req.query.user_id as string;
+    const userId = req.appUserId || (req.query.user_id as string);
     if (!userId) return res.status(400).json({ error: 'user_id is required' });
 
     const configured = await calendarService.isConfigured(userId);
@@ -106,7 +108,8 @@ router.get('/status', async (req: Request, res: Response) => {
 /** POST /api/calendar/check-availability — check if a time slot is free */
 router.post('/check-availability', async (req: Request, res: Response) => {
   try {
-    const { user_id, start, end } = req.body;
+    const { start, end } = req.body;
+    const user_id = req.appUserId || req.body.user_id;
     if (!user_id || !start || !end) {
       return res.status(400).json({ error: 'user_id, start, and end are required' });
     }
@@ -120,9 +123,10 @@ router.post('/check-availability', async (req: Request, res: Response) => {
 
 /** POST /api/calendar/events — create a calendar event */
 router.post('/events', async (req: Request, res: Response) => {
-  console.log('[CALENDAR] POST /events hit', { user_id: req.body?.user_id, summary: req.body?.summary });
+  const user_id = req.appUserId || req.body?.user_id;
+  console.log('[CALENDAR] POST /events hit', { user_id, summary: req.body?.summary });
   try {
-    const { user_id, summary, description, start, duration_minutes, attendee_names } = req.body;
+    const { summary, description, start, duration_minutes, attendee_names } = req.body;
     if (!user_id || !summary || !start) {
       return res.status(400).json({ error: 'user_id, summary, and start are required' });
     }
@@ -168,7 +172,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
 /** DELETE /api/calendar/disconnect — remove Google Calendar connection */
 router.delete('/disconnect', async (req: Request, res: Response) => {
   try {
-    const userId = req.query.user_id as string;
+    const userId = req.appUserId || (req.query.user_id as string);
     if (!userId) return res.status(400).json({ error: 'user_id is required' });
 
     await calendarService.disconnect(userId);

@@ -88,7 +88,7 @@ function Dashboard() {
   // Auto-sync Google Calendar on load
   useEffect(() => {
     if (!user?.google_calendar_connected || user.id.startsWith('demo')) return;
-    api('/calendar/sync', { method: 'POST', body: { user_id: user.id } }).catch(() => {});
+    api('/calendar/sync', { method: 'POST' }).catch(() => {});
   }, [user?.id, user?.google_calendar_connected]);
 
   // Fetch ALL tasks (unfiltered) — filter client-side so stats stay constant
