@@ -5,6 +5,9 @@ export function startBotApiServer(port: number): void {
   const app = express();
   app.use(express.json());
 
+  // Health check for deployment platforms
+  app.get('/health', (_req, res) => { res.json({ ok: true }); });
+
   app.post('/connect', async (req, res) => {
     const { userId } = req.body;
     if (!userId) { res.status(400).json({ error: 'userId required' }); return; }

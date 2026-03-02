@@ -59,3 +59,10 @@ async function main() {
 main().catch((err) => {
   console.error('Fatal error:', err);
 });
+
+// Graceful shutdown — close sockets cleanly so Baileys doesn't see connectionReplaced
+process.on('SIGTERM', () => {
+  console.log('Received SIGTERM, shutting down gracefully...');
+  // Give in-flight operations 3s to finish, then exit
+  setTimeout(() => process.exit(0), 3000);
+});

@@ -160,11 +160,18 @@ export async function connectUser(userId: string): Promise<void> {
 
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
 
-        if (
-          statusCode === DisconnectReason.loggedOut ||
-          statusCode === DisconnectReason.connectionReplaced
-        ) {
-          console.log(`[SESSION] User ${userId}: logged out / replaced, clearing auth`);
+        // connectionReplaced (164) = another instance connected with the same creds
+        // (normal during deployments). Do NOT clear auth — the other instance needs it.
+        if (statusCode === DisconnectReason.connectionReplaced) {
+          console.log(`[SESSION] User ${userId}: connection replaced by another instance`);
+          sessions.delete(userId);
+          entry.status = 'disconnected';
+          _onStatus(userId, 'disconnected');
+          return;
+        }
+
+        if (statusCode === DisconnectReason.loggedOut) {
+          console.log(`[SESSION] User ${userId}: logged out, clearing auth`);
           try { await clearAuth(userId); } catch {}
           try {
             await getSupabase()
