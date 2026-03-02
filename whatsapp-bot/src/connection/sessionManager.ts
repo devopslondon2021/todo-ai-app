@@ -36,6 +36,7 @@ interface SessionEntry {
   sock: WASocket;
   status: 'connecting' | 'qr' | 'connected' | 'disconnected';
   myPhoneJid: string | null;
+  myLidJid: string | null;
   reconnectAttempts: number;
   botSentIds: Set<string>;
   msgRetryCache: NodeCache;
@@ -107,6 +108,7 @@ export async function connectUser(userId: string): Promise<void> {
     sock: null as any,
     status: 'connecting',
     myPhoneJid: null,
+    myLidJid: null,
     reconnectAttempts: 0,
     botSentIds: new Set(),
     msgRetryCache,
@@ -215,7 +217,10 @@ export async function connectUser(userId: string): Promise<void> {
         const me = sock.user;
         if (me?.id) {
           entry.myPhoneJid = jidNormalizedUser(me.id);
-          console.log(`[SESSION] User ${userId}: connected, jid=${entry.myPhoneJid}`);
+          if ((me as any).lid) {
+            entry.myLidJid = jidNormalizedUser((me as any).lid);
+          }
+          console.log(`[SESSION] User ${userId}: connected, jid=${entry.myPhoneJid}, lid=${entry.myLidJid || 'n/a'}`);
           try {
             await getSupabase()
               .from('users')
@@ -245,7 +250,11 @@ export async function connectUser(userId: string): Promise<void> {
         const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
 
         if (isJidGroup(jid) || isJidStatusBroadcast(jid)) continue;
-        if (!isPnUser(jid) && !jid.endsWith('@lid')) continue;
+
+        // Only process self-chat messages (messages sent to your own number)
+        const isSelfPhoneChat = isPnUser(jid) && jid === entry.myPhoneJid;
+        const isSelfLidChat = jid.endsWith('@lid') && (!entry.myLidJid || jid === entry.myLidJid);
+        if (!isSelfPhoneChat && !isSelfLidChat) continue;
 
         const msgId = msg.key?.id || '';
         if (entry.botSentIds.has(msgId)) {
