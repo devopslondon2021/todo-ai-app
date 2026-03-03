@@ -410,7 +410,12 @@ router.post('/check-availability', async (req, res, next) => {
 // POST /api/tasks
 router.post('/', async (req, res, next) => {
   try {
-    const task = await taskService.createTask(req.body);
+    const user_id = req.appUserId || req.body.user_id;
+    if (!user_id) {
+      res.status(400).json({ error: 'user_id is required' });
+      return;
+    }
+    const task = await taskService.createTask({ ...req.body, user_id });
     res.status(201).json({ data: task });
   } catch (err) {
     next(err);
