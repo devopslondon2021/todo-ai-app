@@ -49,7 +49,7 @@ type OnQR = (userId: string, qr: string) => void;
 type OnStatus = (userId: string, status: string, jid?: string) => void;
 type CreateHandler = (userId: string) => MessageHandler;
 
-const MAX_RECONNECT_ATTEMPTS = 5;
+const MAX_RECONNECT_ATTEMPTS = 15;
 
 const sessions = new Map<string, SessionEntry>();
 let _onQR: OnQR = () => {};
@@ -83,11 +83,36 @@ export async function reconnectAll(): Promise<void> {
       .eq('whatsapp_connected', true);
     if (error || !users || users.length === 0) return;
     console.log(`[SESSION] Reconnecting ${users.length} session(s)...`);
-    for (const user of users) {
+
+    // Start all connections in parallel
+    const promises = users.map(user =>
       connectUser(user.id).catch(err =>
         console.error(`[SESSION] Failed to reconnect user ${user.id}:`, err)
-      );
+      )
+    );
+
+    // Wait up to 30s for sockets to initialize (connectUser resolves once socket is created,
+    // but connection.open fires asynchronously — still, this ensures auth state is loaded)
+    await Promise.race([
+      Promise.allSettled(promises),
+      new Promise(resolve => setTimeout(resolve, 30_000)),
+    ]);
+
+    // Wait a bit more for connection.open events to fire
+    const waitStart = Date.now();
+    const maxWait = 20_000;
+    while (Date.now() - waitStart < maxWait) {
+      const allConnected = users.every(u => {
+        const entry = sessions.get(u.id);
+        return entry?.status === 'connected';
+      });
+      if (allConnected) {
+        console.log(`[SESSION] All ${users.length} session(s) connected`);
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
+    console.log('[SESSION] Timed out waiting for all connections — cron will retry when sockets connect');
   } catch (err) {
     console.error('[SESSION] reconnectAll error:', err);
   }
@@ -199,10 +224,18 @@ export async function connectUser(userId: string): Promise<void> {
 
         entry.reconnectAttempts++;
         if (entry.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-          console.log(`[SESSION] User ${userId}: max reconnect attempts reached`);
-          sessions.delete(userId);
+          console.log(`[SESSION] User ${userId}: max reconnect attempts reached — will retry in 5 min`);
           entry.status = 'disconnected';
           _onStatus(userId, 'disconnected');
+          // Don't give up permanently — retry after 5 minutes so crons can eventually work
+          setTimeout(() => {
+            const current = sessions.get(userId);
+            if (current && current.status === 'disconnected') {
+              console.log(`[SESSION] User ${userId}: long-backoff reconnect attempt`);
+              current.reconnectAttempts = 0;
+              connectUser(userId).catch(() => {});
+            }
+          }, 5 * 60_000);
           return;
         }
 

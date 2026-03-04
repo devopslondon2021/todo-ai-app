@@ -52,7 +52,10 @@ export function startReminderScheduler(): void {
           if (!userId) continue;
 
           const sock = getSocketForUser(userId);
-          if (!sock) continue; // retry next minute
+          if (!sock) {
+            console.warn(`[REMINDER] Skipping reminder for user ${userId} — no WhatsApp socket (will retry next minute)`);
+            continue;
+          }
 
           const priority =
             task.priority === 'high' ? '\u{1F534}' : task.priority === 'medium' ? '\u{1F7E1}' : '\u{1F535}';
