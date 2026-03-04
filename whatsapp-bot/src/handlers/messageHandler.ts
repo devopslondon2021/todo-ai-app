@@ -1,4 +1,4 @@
-import { WASocket, proto } from 'baileys';
+import { WASocket, normalizeMessageContent, proto } from 'baileys';
 import { parseCommand } from './commandParser.js';
 import * as taskService from '../services/taskService.js';
 import * as aiService from '../services/aiService.js';
@@ -529,12 +529,15 @@ export function createMessageHandler(userId: string): (sock: WASocket, msg: prot
     const jid = msg.key?.remoteJid;
     if (!jid) return;
 
+    // Unwrap ephemeral/viewOnce/documentWithCaption containers
+    const content = normalizeMessageContent(msg.message);
     const text =
-      msg.message?.conversation ||
-      msg.message?.extendedTextMessage?.text ||
+      content?.conversation ||
+      content?.extendedTextMessage?.text ||
+      content?.extendedTextMessage?.matchedText ||
       '';
 
-    const isVoiceNote = !!(msg.message?.audioMessage?.ptt);
+    const isVoiceNote = !!(content?.audioMessage?.ptt);
 
     if (!text.trim() && !isVoiceNote) return;
 

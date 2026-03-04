@@ -7,6 +7,7 @@ import makeWASocket, {
   isJidGroup,
   isJidStatusBroadcast,
   jidNormalizedUser,
+  normalizeMessageContent,
   proto,
 } from 'baileys';
 import type { WASocket } from 'baileys';
@@ -247,13 +248,13 @@ export async function connectUser(userId: string): Promise<void> {
 
       for (const msg of messages) {
         const jid = msg.key?.remoteJid || '';
-        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
 
         if (isJidGroup(jid) || isJidStatusBroadcast(jid)) continue;
 
-        // Only process self-chat messages (messages sent to your own number)
-        const isSelfPhoneChat = isPnUser(jid) && jid === entry.myPhoneJid;
-        const isSelfLidChat = jid.endsWith('@lid') && (!entry.myLidJid || jid === entry.myLidJid);
+        // Normalize JID for comparison (strips device suffix like :55 from LID JIDs)
+        const normalizedJid = jidNormalizedUser(jid);
+        const isSelfPhoneChat = isPnUser(jid) && normalizedJid === entry.myPhoneJid;
+        const isSelfLidChat = jid.endsWith('@lid') && (!entry.myLidJid || normalizedJid === entry.myLidJid);
         if (!isSelfPhoneChat && !isSelfLidChat) continue;
 
         const msgId = msg.key?.id || '';
@@ -262,7 +263,14 @@ export async function connectUser(userId: string): Promise<void> {
           continue;
         }
 
-        const hasVoiceNote = !!(msg.message?.audioMessage?.ptt);
+        // Unwrap ephemeral/viewOnce/documentWithCaption containers
+        const content = normalizeMessageContent(msg.message);
+        const text =
+          content?.conversation ||
+          content?.extendedTextMessage?.text ||
+          content?.extendedTextMessage?.matchedText ||
+          '';
+        const hasVoiceNote = !!(content?.audioMessage?.ptt);
         if (!text.trim() && !hasVoiceNote) continue;
 
         console.log(`[SESSION] User ${userId}: processing ${hasVoiceNote ? '[voice note]' : `"${text.slice(0, 50)}"`}`);

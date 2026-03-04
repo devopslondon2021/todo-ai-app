@@ -29,6 +29,7 @@ vi.mock('../services/aiService.js', () => ({
 vi.mock('../connection/sessionManager.js', () => ({
   trackSentMessage: vi.fn(),
   storeSentMessage: vi.fn(),
+  getMyPhoneJid: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock('../services/callService.js', () => ({
