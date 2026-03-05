@@ -215,27 +215,38 @@ export function formatCategoryTree(tree: CategoryNode[]): string {
 export function formatSummary(
   stats: { total: number; pending: number; in_progress: number; completed: number },
   todayTasks: Task[],
-  reminders: { id: string; reminder_time: string; tasks: any }[]
+  reminders: { id: string; reminder_time: string; tasks: any }[],
+  todayMeetings: Task[] = []
 ): string {
-  const lines: string[] = ['📊 *Daily Summary*\n'];
+  const lines: string[] = ['\uD83D\uDCCA *Daily Summary*\n'];
 
   // Stats
-  lines.push(`*Tasks:* ${stats.total} total — ${stats.pending} pending, ${stats.in_progress} in progress, ${stats.completed} completed\n`);
+  lines.push(`*Tasks:* ${stats.total} total \u2014 ${stats.pending} pending, ${stats.in_progress} in progress, ${stats.completed} completed\n`);
 
   // Today's tasks
   if (todayTasks.length === 0) {
-    lines.push('📋 *Due Today:* None');
+    lines.push('\uD83D\uDCCB *Due Today:* None');
   } else {
-    lines.push('📋 *Due Today:*');
+    lines.push('\uD83D\uDCCB *Due Today:*');
     todayTasks.forEach((t, i) => {
-      const priority = t.priority === 'high' ? '🔴' : t.priority === 'medium' ? '🟡' : '🔵';
+      const priority = t.priority === 'high' ? '\uD83D\uDD34' : t.priority === 'medium' ? '\uD83D\uDFE1' : '\uD83D\uDD35';
       lines.push(`${i + 1}. ${priority} *${t.title}*`);
+    });
+  }
+
+  // Today's meetings
+  if (todayMeetings.length > 0) {
+    lines.push(`\n\uD83D\uDCC5 *Meetings (${todayMeetings.length}):*`);
+    todayMeetings.forEach((m, i) => {
+      const time = m.due_date ? formatTimeOnly(m.due_date) : null;
+      const timePart = time ? ` \u2014 ${time}` : '';
+      lines.push(`${i + 1}. *${m.title}*${timePart}`);
     });
   }
 
   // Upcoming reminders
   if (reminders.length > 0) {
-    lines.push('\n🔔 *Upcoming Reminders:*');
+    lines.push('\n\uD83D\uDD14 *Upcoming Reminders:*');
     reminders.forEach((r) => {
       // Supabase may return tasks as object or array depending on join
       const taskRef = Array.isArray(r.tasks) ? r.tasks[0] : r.tasks;
@@ -244,7 +255,7 @@ export function formatSummary(
         weekday: 'short', month: 'short', day: 'numeric',
         hour: 'numeric', minute: '2-digit',
       });
-      lines.push(`• ${title} — ${time}`);
+      lines.push(`\u2022 ${title} \u2014 ${time}`);
     });
   }
 
@@ -253,9 +264,10 @@ export function formatSummary(
 
 export function formatMorningSummary(
   tasks: { title: string; priority: string; due_date: string | null }[],
-  meetings: { title: string; description: string | null; due_date: string | null }[]
+  meetings: { title: string; description: string | null; due_date: string | null }[],
+  userName: string = 'there'
 ): string {
-  const lines: string[] = ['\u2600\uFE0F *Good Morning, Prashant!*', "Here's your day at a glance:\n"];
+  const lines: string[] = [`\u2600\uFE0F *Good Morning, ${userName}!*`, "Here's your day at a glance:\n"];
 
   // Tasks section
   if (tasks.length > 0) {

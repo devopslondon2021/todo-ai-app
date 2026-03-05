@@ -9,7 +9,7 @@ export function startDailySummaryScheduler(): void {
     try {
       const { data: users, error } = await getSupabase()
         .from('users')
-        .select('id, whatsapp_jid')
+        .select('id, whatsapp_jid, name')
         .eq('whatsapp_connected', true);
 
       if (error || !users) {
@@ -23,26 +23,23 @@ export function startDailySummaryScheduler(): void {
         if (!sock || !jid) continue;
 
         try {
-          const [tasks, allMeetings] = await Promise.all([
+          const [allTasks, todayMeetings] = await Promise.all([
             getTasksForWhatsApp(user.id, 'today'),
-            getMeetings(user.id),
+            getMeetings(user.id, 'today'),
           ]);
 
-          const now = new Date();
-          const todayStart = new Date(now);
-          todayStart.setHours(0, 0, 0, 0);
-          const todayEnd = new Date(now);
-          todayEnd.setHours(23, 59, 59, 999);
-
-          const todayMeetings = allMeetings.filter((m: any) => {
-            if (!m.due_date) return false;
-            const d = new Date(m.due_date);
-            return d >= todayStart && d <= todayEnd;
-          });
+          // Exclude meetings from tasks to avoid double-counting
+          const meetingIds = new Set(todayMeetings.map((m: any) => m.id));
+          const tasks = allTasks.filter((t: any) =>
+            !meetingIds.has(t.id) &&
+            t.categories?.name !== 'Meetings' &&
+            !t.google_event_id
+          );
 
           if (tasks.length === 0 && todayMeetings.length === 0) continue;
 
-          const message = formatMorningSummary(tasks, todayMeetings);
+          const userName = user.name || 'there';
+          const message = formatMorningSummary(tasks, todayMeetings, userName);
           await sock.sendMessage(jid, { text: message });
         } catch (err) {
           console.error(`[DAILY] Error for user ${user.id}:`, err);
