@@ -4,7 +4,7 @@ import * as taskService from '../services/taskService.js';
 import * as aiService from '../services/aiService.js';
 import * as calendarService from '../services/calendarService.js';
 import { transcribeVoiceMessage } from '../services/transcriptionService.js';
-import { formatTaskList, formatDateList, formatHelp, formatCategoryTree, formatSummary, formatQueryResult, formatVideoList, formatMeetingList } from '../utils/formatter.js';
+import { formatTaskList, formatTasksOnly, formatDateList, formatHelp, formatCategoryTree, formatSummary, formatQueryResult, formatVideoList, formatMeetingList } from '../utils/formatter.js';
 import * as videoService from '../services/videoService.js';
 import { trackSentMessage, storeSentMessage, getMyPhoneJid } from '../connection/sessionManager.js';
 import { isCallEscalationEnabled } from '../services/callService.js';
@@ -316,7 +316,11 @@ async function processTextInput(
         !meetingIds.has(t.id) && t.categories?.name !== 'Meetings' && !t.google_event_id
       );
       cacheTaskList(userId, tasks);
-      await sendReply(sock, replyJid, formatDateList(tasks, meetings, command.filter), userId);
+      if (command.tasksOnly) {
+        await sendReply(sock, replyJid, formatTasksOnly(tasks, command.filter, meetings.length), userId);
+      } else {
+        await sendReply(sock, replyJid, formatDateList(tasks, meetings, command.filter), userId);
+      }
       break;
     }
 

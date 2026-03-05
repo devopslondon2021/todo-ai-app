@@ -1,6 +1,6 @@
 export type Command =
   | { type: 'add'; text: string }
-  | { type: 'list'; filter?: string }
+  | { type: 'list'; filter?: string; tasksOnly?: boolean }
   | { type: 'done'; taskNumber: number }
   | { type: 'done_search'; search: string }
   | { type: 'delete'; taskNumber: number }
@@ -172,6 +172,19 @@ export function parseCommand(text: string): Command {
     return { type: 'list', filter };
   }
 
+  // "tasks on friday", "tasks tomorrow", "tasks on 10th march", "tasks for monday"
+  const tasksOnDateMatch = lower.match(/^tasks?\s+(?:on|for)?\s*(.+)/);
+  if (tasksOnDateMatch) {
+    const dateStr = tasksOnDateMatch[1].replace(/\b(?:the|on|for)\b/g, '').trim();
+    if (dateStr && (TIME_WORDS.has(dateStr) || isDateFilter(dateStr))) {
+      return { type: 'list', filter: dateStr, tasksOnly: true };
+    }
+    // Check multi-word time
+    for (const mt of MULTI_WORD_TIME) {
+      if (dateStr === mt) return { type: 'list', filter: dateStr, tasksOnly: true };
+    }
+  }
+
   if (/^(?:overdue)$/.test(lower)) {
     return { type: 'list', filter: 'overdue' };
   }
@@ -238,6 +251,9 @@ export function parseCommand(text: string): Command {
       return { type: 'meetings', filter };
     }
 
+    // Check if user specifically asked for "tasks" (not generic list)
+    const hasTaskWord = /\btasks?\b/.test(raw);
+
     // Normalize common patterns: strip "tasks" filler, possessives
     const normalized = raw
       .replace(/'s?\b/g, '')       // remove possessives
@@ -246,7 +262,7 @@ export function parseCommand(text: string): Command {
       .replace(/\s+/g, ' ')
       .trim() || undefined;
 
-    return { type: 'list', filter: normalized };
+    return { type: 'list', filter: normalized, ...(hasTaskWord && { tasksOnly: true }) };
   }
 
   if (lower.startsWith('done ')) {
@@ -272,13 +288,17 @@ export function parseCommand(text: string): Command {
   }
 
   // ── Meetings command (standalone, with optional time filter) ──
-  // "meetings", "meetings today", "calendar tomorrow", "today's meetings", "today meeting"
-  const meetStandaloneMatch = lower.match(
-    /^(?:(?:(today|tomorrow)'?s?|((?:this|next)\s+week)'?s?)\s+meetings?|(?:meetings?|calendar)(?:\s+(today|tomorrow|(?:this|next)\s+week))?)$/
-  );
+  // "meetings", "meetings friday", "meetings on 10th march", "calendar tomorrow", "today's meetings"
+  const meetStandaloneMatch = lower.match(/^(?:meetings?|calendar)\s*(.*)$/);
   if (meetStandaloneMatch) {
-    const filter = meetStandaloneMatch[1] || meetStandaloneMatch[2] || meetStandaloneMatch[3];
-    return { type: 'meetings', filter };
+    const rest = meetStandaloneMatch[1].replace(/\b(?:on|for|the)\b/g, '').trim();
+    if (!rest) return { type: 'meetings' };
+    if (TIME_WORDS.has(rest) || isDateFilter(rest)) return { type: 'meetings', filter: rest };
+    for (const mt of MULTI_WORD_TIME) {
+      if (rest === mt) return { type: 'meetings', filter: rest };
+    }
+    // Still return as meetings with the raw filter for compatibility
+    return { type: 'meetings', filter: rest || undefined };
   }
 
   // ── Videos command ──

@@ -46,6 +46,32 @@ export function formatTaskList(tasks: Task[]): string {
   return `📋 *Your Tasks*\n\n${lines.join('\n')}\n\n_Reply "done [number]" to complete a task_`;
 }
 
+/** Tasks-only formatter — when user explicitly asks for "tasks on [date]" */
+export function formatTasksOnly(tasks: Task[], filter?: string, meetingCount: number = 0): string {
+  const label = filter ? ` for ${filter}` : '';
+  if (tasks.length === 0) {
+    const hint = meetingCount > 0
+      ? `\n\n\uD83D\uDCC5 You have ${meetingCount} meeting${meetingCount > 1 ? 's' : ''}${label} though. Try *list meetings${filter ? ' ' + filter : ''}* to see ${meetingCount > 1 ? 'them' : 'it'}.`
+      : '';
+    return `\uD83D\uDCCB No tasks found${label}.${hint}`;
+  }
+
+  const lines = tasks.map((t, i) => {
+    const status = t.status === 'completed' ? '\u2705' : t.status === 'in_progress' ? '\uD83D\uDD04' : '\u2B1C';
+    const priority = t.priority === 'high' ? '\uD83D\uDD34' : t.priority === 'medium' ? '\uD83D\uDFE1' : '\uD83D\uDD35';
+    const cat = t.categories?.name ? ` [${t.categories.name}]` : '';
+    const time = t.due_date ? formatTimeOnly(t.due_date) : null;
+    const timePart = time ? ` \u2014 ${time}` : '';
+    return `${i + 1}. ${status} ${priority} *${t.title}*${cat}${timePart}`;
+  });
+
+  const header = `\uD83D\uDCCB *Tasks${label}*`;
+  const meetingHint = meetingCount > 0
+    ? `\n\n\uD83D\uDCC5 _Also ${meetingCount} meeting${meetingCount > 1 ? 's' : ''}${label}. Try *meetings${filter ? ' ' + filter : ''}* to view._`
+    : '';
+  return `${header}\n\n${lines.join('\n')}\n\n_Reply "done [number]" to complete a task_${meetingHint}`;
+}
+
 /** Combined formatter for date-filtered list — shows tasks + meetings for that date */
 export function formatDateList(tasks: Task[], meetings: MeetingTask[], filter?: string): string {
   // No filter: fall back to tasks-only format (plain "list" command)
