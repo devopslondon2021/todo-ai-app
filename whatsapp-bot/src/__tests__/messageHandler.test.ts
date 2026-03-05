@@ -16,6 +16,7 @@ vi.mock('../services/taskService.js', () => ({
   getCategoryTree: vi.fn(),
   getTaskStats: vi.fn(),
   getUpcomingReminders: vi.fn(),
+  getMeetings: vi.fn().mockResolvedValue([]),
   acknowledgeReminders: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -579,6 +580,7 @@ describe('handleMessage', () => {
       expect(taskService.getTaskStats).toHaveBeenCalledWith('user-1');
       expect(taskService.getTasksForWhatsApp).toHaveBeenCalledWith('user-1', 'today');
       expect(taskService.getUpcomingReminders).toHaveBeenCalledWith('user-1');
+      expect(taskService.getMeetings).toHaveBeenCalledWith('user-1', 'today');
 
       const reply = sock.sendMessage.mock.calls[0][1].text;
       expect(reply).toContain('Daily Summary');

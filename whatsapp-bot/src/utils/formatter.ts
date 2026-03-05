@@ -46,6 +46,52 @@ export function formatTaskList(tasks: Task[]): string {
   return `📋 *Your Tasks*\n\n${lines.join('\n')}\n\n_Reply "done [number]" to complete a task_`;
 }
 
+/** Combined formatter for date-filtered list — shows tasks + meetings for that date */
+export function formatDateList(tasks: Task[], meetings: MeetingTask[], filter?: string): string {
+  // No filter: fall back to tasks-only format (plain "list" command)
+  if (!filter) return formatTaskList(tasks);
+
+  // Date filter but no meetings: tasks-only with date context
+  if (meetings.length === 0) {
+    if (tasks.length === 0) {
+      return `\uD83D\uDCCB No tasks or meetings for ${filter}.`;
+    }
+    return formatTaskList(tasks);
+  }
+
+  const label = filter ? ` — ${filter.charAt(0).toUpperCase() + filter.slice(1)}` : '';
+  const lines: string[] = [`\uD83D\uDCC6 *Your Schedule${label}*\n`];
+
+  // Tasks section
+  if (tasks.length > 0) {
+    lines.push(`\uD83D\uDCCB *Tasks (${tasks.length}):*`);
+    tasks.forEach((t, i) => {
+      const priority = t.priority === 'high' ? '\uD83D\uDD34' : t.priority === 'medium' ? '\uD83D\uDFE1' : '\uD83D\uDD35';
+      const cat = t.categories?.name ? ` [${t.categories.name}]` : '';
+      const time = t.due_date ? formatTimeOnly(t.due_date) : null;
+      const timePart = time ? ` \u2014 ${time}` : '';
+      lines.push(`${i + 1}. ${priority} *${t.title}*${cat}${timePart}`);
+    });
+  } else {
+    lines.push('\uD83D\uDCCB *Tasks:* None');
+  }
+
+  // Meetings section
+  if (meetings.length > 0) {
+    lines.push(`\n\uD83D\uDCC5 *Meetings (${meetings.length}):*`);
+    meetings.forEach((m, i) => {
+      const time = m.due_date ? formatTimeOnly(m.due_date) : null;
+      const timePart = time ? ` \u2014 ${time}` : 'No time set';
+      const link = m.description?.startsWith('https://') ? m.description.split('\n')[0] : null;
+      const linkText = link ? `\n   \uD83D\uDD17 ${link}` : '';
+      lines.push(`${i + 1}. *${m.title}* \u2014 ${timePart}${linkText}`);
+    });
+  }
+
+  lines.push('\n_Reply "done [number]" to complete a task_');
+  return lines.join('\n');
+}
+
 export function formatQueryResult(tasks: Task[], search: string, timeFilter?: string): string {
   const timeLabel = timeFilter ? ` for ${timeFilter}` : '';
   const searchLabel = search ? ` matching "${search}"` : '';

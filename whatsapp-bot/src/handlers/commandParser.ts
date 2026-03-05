@@ -32,9 +32,53 @@ function detectVideoLink(text: string): { url: string; platform: 'youtube' | 'in
   return null;
 }
 
+const DAY_NAME_PATTERN = /^(?:sunday|sun|monday|mon|tuesday|tue|tues|wednesday|wed|thursday|thu|thurs|friday|fri|saturday|sat)$/;
+const MONTH_RE = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+const SPECIFIC_DATE_PATTERN = new RegExp(`^(?:\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH_RE}|${MONTH_RE}\\s+\\d{1,2}(?:st|nd|rd|th)?|\\d{1,2}[/\\-]\\d{1,2})$`);
+const PREFIXED_DAY_PATTERN = /^(?:this|next)\s+(?:sunday|sun|monday|mon|tuesday|tue|tues|wednesday|wed|thursday|thu|thurs|friday|fri|saturday|sat)$/;
+
+/** Check if a string looks like a date filter (day name, specific date, or prefixed day) */
+function isDateFilter(s: string): boolean {
+  const lower = s.toLowerCase().trim();
+  if (DAY_NAME_PATTERN.test(lower)) return true;
+  if (PREFIXED_DAY_PATTERN.test(lower)) return true;
+  if (lower === 'day after tomorrow') return true;
+  // Specific dates: "10th march", "march 10", "10/3", "the 10th"
+  const cleaned = lower.replace(/\b(the|of|on)\b/g, '').trim();
+  if (SPECIFIC_DATE_PATTERN.test(cleaned)) return true;
+  // Just a number like "10th" or "the 10th"
+  if (/^\d{1,2}(?:st|nd|rd|th)?$/.test(cleaned)) return true;
+  return false;
+}
+
+/** Extract a date filter from natural language, stripping filler words */
+function extractDateFromNatural(text: string): string | undefined {
+  const stripped = text
+    .replace(/\?+$/, '')
+    .replace(/\b(do|does|i|have|any|anything|what(?:'?s)?|is|are|there|my|for|on|the|tasks?|meetings?|schedule|happening|planned|going|stuff|things|lined\s+up|free|busy|am|show|get|list)\b/gi, '')
+    .replace(/['']/g, '')
+    .trim()
+    .replace(/\s+/g, ' ');
+  if (!stripped) return undefined;
+  // Check if what remains is a recognizable date
+  if (TIME_WORDS.has(stripped.toLowerCase())) return stripped.toLowerCase();
+  for (const mt of MULTI_WORD_TIME) {
+    if (stripped.toLowerCase() === mt) return mt;
+  }
+  if (isDateFilter(stripped)) return stripped.toLowerCase();
+  return undefined;
+}
+
 /** Known time-filter words for compound filter extraction */
-const TIME_WORDS = new Set(['today', 'tomorrow', 'overdue', 'pending', 'completed']);
-const MULTI_WORD_TIME = ['this week', 'next week'];
+const TIME_WORDS = new Set([
+  'today', 'tomorrow', 'yesterday', 'overdue', 'pending', 'completed',
+  'sunday', 'sun', 'monday', 'mon', 'tuesday', 'tue', 'tues',
+  'wednesday', 'wed', 'thursday', 'thu', 'thurs', 'friday', 'fri', 'saturday', 'sat',
+]);
+const MULTI_WORD_TIME = ['this week', 'next week', 'day after tomorrow',
+  'this sunday', 'this monday', 'this tuesday', 'this wednesday', 'this thursday', 'this friday', 'this saturday',
+  'next sunday', 'next monday', 'next tuesday', 'next wednesday', 'next thursday', 'next friday', 'next saturday',
+];
 
 /** Try to extract a time filter and leftover category from a raw filter string.
  *  e.g. "work today" → { time: 'today', category: 'work' }
@@ -132,8 +176,11 @@ export function parseCommand(text: string): Command {
     return { type: 'list', filter: 'overdue' };
   }
 
-  // Standalone "today" / "tomorrow" → list with that filter
-  if (/^(today|tomorrow)$/.test(lower)) {
+  // Standalone "today" / "tomorrow" / "yesterday" / day names → list with that filter
+  if (/^(today|tomorrow|yesterday)$/.test(lower)) {
+    return { type: 'list', filter: lower };
+  }
+  if (isDateFilter(lower)) {
     return { type: 'list', filter: lower };
   }
 
@@ -191,10 +238,13 @@ export function parseCommand(text: string): Command {
       return { type: 'meetings', filter };
     }
 
-    // Normalize common patterns
+    // Normalize common patterns: strip "tasks" filler, possessives
     const normalized = raw
-      .replace(/^today'?s?\s+tasks?$/, 'today')
-      .replace(/^tomorrow'?s?\s+tasks?$/, 'tomorrow');
+      .replace(/'s?\b/g, '')       // remove possessives
+      .replace(/\btasks?\b/g, '')  // remove "task"/"tasks"
+      .replace(/\b(?:my|for|on|the)\b/g, '') // remove filler
+      .replace(/\s+/g, ' ')
+      .trim() || undefined;
 
     return { type: 'list', filter: normalized };
   }
@@ -271,6 +321,43 @@ export function parseCommand(text: string): Command {
   const videoLink = detectVideoLink(trimmed);
   if (videoLink) {
     return { type: 'video_link', url: videoLink.url, platform: videoLink.platform };
+  }
+
+  // ── Possessive day patterns: "friday's tasks", "monday's meetings" ──
+  const possessiveDayMatch = lower.match(/^(.+?)'?s?\s+(?:tasks?|schedule)$/);
+  if (possessiveDayMatch) {
+    const dayPart = possessiveDayMatch[1].trim();
+    if (isDateFilter(dayPart) || TIME_WORDS.has(dayPart)) {
+      return { type: 'list', filter: dayPart };
+    }
+  }
+  const possessiveMeetMatch = lower.match(/^(.+?)'?s?\s+meetings?$/);
+  if (possessiveMeetMatch) {
+    const dayPart = possessiveMeetMatch[1].trim();
+    if (isDateFilter(dayPart) || TIME_WORDS.has(dayPart)) {
+      return { type: 'meetings', filter: dayPart };
+    }
+  }
+
+  // ── Natural language questions about tasks/meetings/schedule ──
+  // "do I have tasks tomorrow?", "what's on friday?", "anything on 10th march?",
+  // "am I free on monday?", "what's my schedule for friday?", "any meetings tomorrow?"
+  const isQuestion = /^(?:do|does|what(?:'?s)?|any|anything|is|are|am|have|show|get)\b/.test(lower) ||
+    lower.endsWith('?');
+  if (isQuestion) {
+    const dateFilter = extractDateFromNatural(lower);
+    if (dateFilter) {
+      // Determine if asking specifically about meetings
+      if (/\bmeetings?\b/i.test(lower)) {
+        return { type: 'meetings', filter: dateFilter };
+      }
+      // "am I free" → meetings check
+      if (/\b(?:free|busy|available|booked)\b/i.test(lower)) {
+        return { type: 'meetings', filter: dateFilter };
+      }
+      // Everything else → list (tasks + meetings for that date)
+      return { type: 'list', filter: dateFilter };
+    }
   }
 
   // ── Typo tolerance for "list" (e.g. "listt", "lis", "lisst") ──

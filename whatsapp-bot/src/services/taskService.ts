@@ -266,49 +266,153 @@ export async function getRecentTasks(userId: string): Promise<Task[]> {
 }
 
 /** Parse a time filter string into a date range */
+const DAY_NAMES: Record<string, number> = {
+  sunday: 0, sun: 0, monday: 1, mon: 1, tuesday: 2, tue: 2, tues: 2,
+  wednesday: 3, wed: 3, thursday: 4, thu: 4, thurs: 4,
+  friday: 5, fri: 5, saturday: 6, sat: 6,
+};
+
+const MONTH_NAMES: Record<string, number> = {
+  january: 0, jan: 0, february: 1, feb: 1, march: 2, mar: 2,
+  april: 3, apr: 3, may: 4, june: 5, jun: 5, july: 6, jul: 6,
+  august: 7, aug: 7, september: 8, sep: 8, sept: 8,
+  october: 9, oct: 9, november: 10, nov: 10, december: 11, dec: 11,
+};
+
+/** Build a single-day range (00:00 to 23:59) */
+function dayRange(d: Date): { start: Date; end: Date } {
+  const start = new Date(d);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(d);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+/** Get the next occurrence of a weekday (0=Sun..6=Sat). If today is that day, returns today. */
+function nextWeekday(dayNum: number, now: Date): Date {
+  const d = new Date(now);
+  const diff = (dayNum - now.getDay() + 7) % 7;
+  d.setDate(now.getDate() + (diff === 0 ? 0 : diff));
+  return d;
+}
+
 function parseTimeFilter(filter: string): { start: Date; end: Date } | null {
-  const f = filter.toLowerCase();
+  const f = filter.toLowerCase().trim();
   const now = new Date();
 
-  if (f === 'today') {
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-    return { start, end };
-  }
-
+  // today / tomorrow / yesterday / day after tomorrow
+  if (f === 'today') return dayRange(now);
   if (f === 'tomorrow') {
-    const start = new Date(now);
-    start.setDate(start.getDate() + 1);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setHours(23, 59, 59, 999);
-    return { start, end };
+    const d = new Date(now); d.setDate(d.getDate() + 1); return dayRange(d);
+  }
+  if (f === 'yesterday') {
+    const d = new Date(now); d.setDate(d.getDate() - 1); return dayRange(d);
+  }
+  if (f === 'day after tomorrow') {
+    const d = new Date(now); d.setDate(d.getDate() + 2); return dayRange(d);
   }
 
+  // this week / next week
   if (f === 'this week') {
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
+    const start = new Date(now); start.setHours(0, 0, 0, 0);
     const end = new Date(now);
-    const daysUntilSunday = 7 - now.getDay();
-    end.setDate(now.getDate() + daysUntilSunday);
+    end.setDate(now.getDate() + (7 - now.getDay()));
     end.setHours(23, 59, 59, 999);
     return { start, end };
   }
-
   if (f === 'next week') {
     const daysUntilNextMon = ((8 - now.getDay()) % 7) || 7;
-    const start = new Date(now);
-    start.setDate(now.getDate() + daysUntilNextMon);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(start.getDate() + 6);
-    end.setHours(23, 59, 59, 999);
+    const start = new Date(now); start.setDate(now.getDate() + daysUntilNextMon); start.setHours(0, 0, 0, 0);
+    const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23, 59, 59, 999);
     return { start, end };
+  }
+
+  // Day names: "friday", "this friday", "next friday"
+  const dayPrefixMatch = f.match(/^(this|next)\s+(.+)$/);
+  const dayWord = dayPrefixMatch ? dayPrefixMatch[2] : f;
+  const prefix = dayPrefixMatch ? dayPrefixMatch[1] : null;
+  if (DAY_NAMES[dayWord] !== undefined) {
+    const dayNum = DAY_NAMES[dayWord];
+    if (prefix === 'next') {
+      // "next friday" = the friday AFTER this coming one
+      const d = nextWeekday(dayNum, now);
+      // If it's today or this week, push to next week
+      const diff = (dayNum - now.getDay() + 7) % 7;
+      if (diff === 0 || diff <= 6) d.setDate(d.getDate() + (diff === 0 ? 7 : (diff <= 6 ? 7 : 0)));
+      // Simpler: always add 7 from the natural next occurrence if prefix is "next"
+      const base = nextWeekday(dayNum, now);
+      base.setDate(base.getDate() + 7);
+      return dayRange(base);
+    }
+    // "friday" or "this friday" = the coming one (or today if it is that day)
+    return dayRange(nextWeekday(dayNum, now));
+  }
+
+  // Specific dates: "10th march", "march 10", "10 mar", "10th", "the 10th"
+  const parsed = parseSpecificDate(f, now);
+  if (parsed) return dayRange(parsed);
+
+  return null;
+}
+
+/** Parse specific date strings like "10th march", "march 10", "10/3", "10-03", "the 10th" */
+function parseSpecificDate(f: string, now: Date): Date | null {
+  // Strip ordinal suffixes and common filler
+  const cleaned = f.replace(/\b(the|of|on)\b/g, '').replace(/(st|nd|rd|th)\b/gi, '').trim().replace(/\s+/g, ' ');
+
+  // "10 march" or "10 mar"
+  const dayMonthMatch = cleaned.match(/^(\d{1,2})\s+([a-z]+)$/);
+  if (dayMonthMatch) {
+    const day = parseInt(dayMonthMatch[1], 10);
+    const month = MONTH_NAMES[dayMonthMatch[2]];
+    if (month !== undefined && day >= 1 && day <= 31) {
+      return buildDate(day, month, now);
+    }
+  }
+
+  // "march 10" or "mar 10"
+  const monthDayMatch = cleaned.match(/^([a-z]+)\s+(\d{1,2})$/);
+  if (monthDayMatch) {
+    const month = MONTH_NAMES[monthDayMatch[1]];
+    const day = parseInt(monthDayMatch[2], 10);
+    if (month !== undefined && day >= 1 && day <= 31) {
+      return buildDate(day, month, now);
+    }
+  }
+
+  // "10/3" or "10-3" or "10/03" (day/month format)
+  const slashMatch = cleaned.match(/^(\d{1,2})[/\-](\d{1,2})$/);
+  if (slashMatch) {
+    const day = parseInt(slashMatch[1], 10);
+    const month = parseInt(slashMatch[2], 10) - 1; // 0-indexed
+    if (month >= 0 && month <= 11 && day >= 1 && day <= 31) {
+      return buildDate(day, month, now);
+    }
+  }
+
+  // Just a day number: "10", "the 10" → assume current or next month
+  const justDayMatch = cleaned.match(/^(\d{1,2})$/);
+  if (justDayMatch) {
+    const day = parseInt(justDayMatch[1], 10);
+    if (day >= 1 && day <= 31) {
+      const d = new Date(now.getFullYear(), now.getMonth(), day);
+      // If that day already passed this month, use next month
+      if (d < new Date(now.getFullYear(), now.getMonth(), now.getDate())) {
+        d.setMonth(d.getMonth() + 1);
+      }
+      return d;
+    }
   }
 
   return null;
+}
+
+/** Build a Date for day/month, using current year (or next year if the date has passed) */
+function buildDate(day: number, month: number, now: Date): Date {
+  const d = new Date(now.getFullYear(), month, day);
+  const today = new Date(now); today.setHours(0, 0, 0, 0);
+  if (d < today) d.setFullYear(d.getFullYear() + 1);
+  return d;
 }
 
 export async function getTasksForWhatsApp(userId: string, filter?: string, search?: string): Promise<Task[]> {

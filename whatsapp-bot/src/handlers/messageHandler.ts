@@ -4,7 +4,7 @@ import * as taskService from '../services/taskService.js';
 import * as aiService from '../services/aiService.js';
 import * as calendarService from '../services/calendarService.js';
 import { transcribeVoiceMessage } from '../services/transcriptionService.js';
-import { formatTaskList, formatHelp, formatCategoryTree, formatSummary, formatQueryResult, formatVideoList, formatMeetingList } from '../utils/formatter.js';
+import { formatTaskList, formatDateList, formatHelp, formatCategoryTree, formatSummary, formatQueryResult, formatVideoList, formatMeetingList } from '../utils/formatter.js';
 import * as videoService from '../services/videoService.js';
 import { trackSentMessage, storeSentMessage, getMyPhoneJid } from '../connection/sessionManager.js';
 import { isCallEscalationEnabled } from '../services/callService.js';
@@ -306,9 +306,17 @@ async function processTextInput(
     }
 
     case 'list': {
-      const tasks = await taskService.getTasksForWhatsApp(user.id, command.filter);
+      const [allTasks, meetings] = await Promise.all([
+        taskService.getTasksForWhatsApp(user.id, command.filter),
+        command.filter ? taskService.getMeetings(user.id, command.filter) : Promise.resolve([]),
+      ]);
+      // Separate tasks from meetings
+      const meetingIds = new Set(meetings.map((m: any) => m.id));
+      const tasks = allTasks.filter((t: any) =>
+        !meetingIds.has(t.id) && t.categories?.name !== 'Meetings' && !t.google_event_id
+      );
       cacheTaskList(userId, tasks);
-      await sendReply(sock, replyJid, formatTaskList(tasks), userId);
+      await sendReply(sock, replyJid, formatDateList(tasks, meetings, command.filter), userId);
       break;
     }
 
@@ -500,9 +508,16 @@ async function processTextInput(
           break;
         }
         case 'list': {
-          const tasks = await taskService.getTasksForWhatsApp(user.id, classified.timeFilter);
-          cacheTaskList(userId, tasks);
-          await sendReply(sock, replyJid, formatTaskList(tasks), userId);
+          const [allListTasks, listMeetings] = await Promise.all([
+            taskService.getTasksForWhatsApp(user.id, classified.timeFilter),
+            classified.timeFilter ? taskService.getMeetings(user.id, classified.timeFilter) : Promise.resolve([]),
+          ]);
+          const listMeetingIds = new Set(listMeetings.map((m: any) => m.id));
+          const listTasks = allListTasks.filter((t: any) =>
+            !listMeetingIds.has(t.id) && t.categories?.name !== 'Meetings' && !t.google_event_id
+          );
+          cacheTaskList(userId, listTasks);
+          await sendReply(sock, replyJid, formatDateList(listTasks, listMeetings, classified.timeFilter), userId);
           break;
         }
         case 'summary': {

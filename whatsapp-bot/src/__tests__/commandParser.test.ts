@@ -81,7 +81,7 @@ describe('parseCommand', () => {
 
     it('is case-insensitive for keyword', () => {
       expect(parseCommand('LIST')).toEqual({ type: 'list', filter: undefined });
-      expect(parseCommand('List Today')).toEqual({ type: 'list', filter: 'Today' });
+      expect(parseCommand('List Today')).toEqual({ type: 'list', filter: 'today' });
     });
   });
 
@@ -95,8 +95,8 @@ describe('parseCommand', () => {
       expect(parseCommand('done 15')).toEqual({ type: 'done', taskNumber: 15 });
     });
 
-    it('falls through to unknown for invalid number', () => {
-      expect(parseCommand('done abc')).toEqual({ type: 'unknown', text: 'done abc' });
+    it('searches by keyword for non-numeric done', () => {
+      expect(parseCommand('done abc')).toEqual({ type: 'done_search', search: 'abc' });
     });
 
     it('is case-insensitive', () => {
