@@ -193,35 +193,35 @@ describe('parseCommand', () => {
   // ─── NATURAL LANGUAGE LIST ───
   describe('natural language list variants', () => {
     it('parses "show my tasks"', () => {
-      expect(parseCommand('show my tasks')).toEqual({ type: 'list', filter: undefined });
+      expect(parseCommand('show my tasks')).toEqual({ type: 'list', filter: undefined, tasksOnly: true });
     });
 
     it('parses "show tasks"', () => {
-      expect(parseCommand('show tasks')).toEqual({ type: 'list', filter: undefined });
+      expect(parseCommand('show tasks')).toEqual({ type: 'list', filter: undefined, tasksOnly: true });
     });
 
     it('parses "get my tasks"', () => {
-      expect(parseCommand('get my tasks')).toEqual({ type: 'list', filter: undefined });
+      expect(parseCommand('get my tasks')).toEqual({ type: 'list', filter: undefined, tasksOnly: true });
     });
 
     it('parses "my tasks"', () => {
-      expect(parseCommand('my tasks')).toEqual({ type: 'list', filter: undefined });
+      expect(parseCommand('my tasks')).toEqual({ type: 'list', filter: undefined, tasksOnly: true });
     });
 
     it('parses "show today\'s tasks"', () => {
-      expect(parseCommand("show today's tasks")).toEqual({ type: 'list', filter: 'today' });
+      expect(parseCommand("show today's tasks")).toEqual({ type: 'list', filter: 'today', tasksOnly: true });
     });
 
     it('parses "show my today\'s tasks"', () => {
-      expect(parseCommand("show my today's tasks")).toEqual({ type: 'list', filter: 'today' });
+      expect(parseCommand("show my today's tasks")).toEqual({ type: 'list', filter: 'today', tasksOnly: true });
     });
 
     it('normalizes "list today\'s tasks" filter to "today"', () => {
-      expect(parseCommand("list today's tasks")).toEqual({ type: 'list', filter: 'today' });
+      expect(parseCommand("list today's tasks")).toEqual({ type: 'list', filter: 'today', tasksOnly: true });
     });
 
     it('normalizes "list todays tasks" filter to "today"', () => {
-      expect(parseCommand('list todays tasks')).toEqual({ type: 'list', filter: 'today' });
+      expect(parseCommand('list todays tasks')).toEqual({ type: 'list', filter: 'today', tasksOnly: true });
     });
   });
 

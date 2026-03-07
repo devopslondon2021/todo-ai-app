@@ -306,9 +306,10 @@ async function processTextInput(
     }
 
     case 'list': {
+      const fetchMeetings = !command.tasksOnly;
       const [allTasks, meetings] = await Promise.all([
         taskService.getTasksForWhatsApp(user.id, command.filter),
-        command.filter ? taskService.getMeetings(user.id, command.filter) : Promise.resolve([]),
+        fetchMeetings ? taskService.getMeetings(user.id, command.filter) : Promise.resolve([]),
       ]);
       // Separate tasks from meetings
       const meetingIds = new Set(meetings.map((m: any) => m.id));

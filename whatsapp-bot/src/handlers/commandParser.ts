@@ -169,7 +169,7 @@ export function parseCommand(text: string): Command {
   // Single-word list shortcuts
   if (/^(?:tasks?|pending)$/.test(lower)) {
     const filter = lower.startsWith('pending') ? 'pending' : undefined;
-    return { type: 'list', filter };
+    return { type: 'list', filter, tasksOnly: true };
   }
 
   // "tasks on friday", "tasks tomorrow", "tasks on 10th march", "tasks for monday"
@@ -199,26 +199,28 @@ export function parseCommand(text: string): Command {
 
   // "all tasks", "my tasks", "show all", "show all tasks", "list all", "list everything"
   if (/^(?:all\s+tasks?|my\s+tasks?|show\s+(?:all(?:\s+tasks?)?|my\s+tasks?)|list\s+(?:all(?:\s+tasks?)?|everything)|get\s+(?:all\s+)?tasks?)$/.test(lower)) {
-    return { type: 'list' };
+    return { type: 'list', ...((/\btasks?\b/.test(lower)) && { tasksOnly: true }) };
   }
 
   // "today's tasks", "today tasks", "tomorrow's tasks", "what's for today/tomorrow"
   const possessiveTaskMatch = lower.match(/^(?:(today|tomorrow)'?s?\s+tasks?|what'?s?\s+(?:for\s+)?(today|tomorrow))$/);
   if (possessiveTaskMatch) {
-    return { type: 'list', filter: possessiveTaskMatch[1] || possessiveTaskMatch[2] };
+    const filter = possessiveTaskMatch[1] || possessiveTaskMatch[2];
+    const hasTask = /\btasks?\b/.test(lower);
+    return { type: 'list', filter, ...(hasTask && { tasksOnly: true }) };
   }
 
   // "pending tasks", "overdue tasks", "completed tasks"
   if (/^(?:pending|overdue|completed)\s+tasks?$/.test(lower)) {
     const filter = lower.split(/\s/)[0];
-    return { type: 'list', filter };
+    return { type: 'list', filter, tasksOnly: true };
   }
 
   // "show/get/list today's tasks", "show/get/list my tasks", "show my tasks today"
   const listNaturalMatch = lower.match(/^(?:show|get|list)\s+(?:my\s+)?(?:(?:today|tomorrow)'?s?\s+)?tasks?(?:\s+(today|tomorrow))?$/);
   if (listNaturalMatch) {
     const filter = listNaturalMatch[1] || (lower.includes('today') ? 'today' : lower.includes('tomorrow') ? 'tomorrow' : undefined);
-    return { type: 'list', filter };
+    return { type: 'list', filter, tasksOnly: true };
   }
 
   // ── Meetings listing (with optional time filter) ──

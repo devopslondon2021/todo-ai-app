@@ -5,6 +5,7 @@ import * as categoryService from '../services/categoryService';
 import * as reminderService from '../services/reminderService';
 import * as calendarService from '../services/calendarService';
 import { apiKeyAuth } from '../middleware/apiKeyAuth';
+import { getSupabase } from '../config/supabase';
 
 const router = Router();
 
@@ -315,6 +316,13 @@ router.post('/meeting', async (req, res, next) => {
     if (attendees?.length) descParts.push(`Attendees: ${attendees.join(', ')}`);
     const fullDescription = descParts.join('\n');
 
+    // Set reminder 30 min before meeting
+    let reminder_time: string | undefined;
+    if (due_date) {
+      const rt = new Date(new Date(due_date).getTime() - 30 * 60 * 1000);
+      if (rt.getTime() > Date.now()) reminder_time = rt.toISOString();
+    }
+
     const task = await taskService.createTask({
       user_id,
       category_id: resolvedCategoryId,
@@ -322,6 +330,7 @@ router.post('/meeting', async (req, res, next) => {
       description: fullDescription,
       priority: priority || 'medium',
       due_date,
+      reminder_time,
       google_event_id: googleEventId,
       google_event_created_by_app: !!googleEventId,
     });
@@ -458,10 +467,34 @@ router.patch('/:id', async (req, res, next) => {
     }
     const task = await taskService.updateTask(req.params.id, req.body);
 
+    // If due_date changed, update reminders
+    const dateChanged = req.body.due_date && req.body.due_date !== existing?.due_date;
+    if (dateChanged && existing?.user_id) {
+      try {
+        // Cancel old unsent reminders
+        await getSupabase()
+          .from('reminders')
+          .update({ is_sent: true })
+          .eq('task_id', req.params.id)
+          .eq('is_sent', false);
+
+        // Create new reminder 30 min before new due_date
+        const newReminderTime = new Date(new Date(req.body.due_date).getTime() - 30 * 60_000);
+        if (newReminderTime.getTime() > Date.now()) {
+          await getSupabase().from('reminders').insert({
+            task_id: req.params.id,
+            user_id: existing.user_id,
+            reminder_time: newReminderTime.toISOString(),
+          });
+        }
+      } catch (err) {
+        console.warn('[PATCH] Reminder update failed (task updated anyway):', err);
+      }
+    }
+
     // Propagate title/time changes to Google Calendar
     if (existing?.google_event_id && existing.user_id) {
       const titleChanged = req.body.title && req.body.title !== existing.title;
-      const dateChanged = req.body.due_date && req.body.due_date !== existing.due_date;
       if (titleChanged || dateChanged) {
         try {
           // Extract duration from description (e.g. "Duration: 30m")

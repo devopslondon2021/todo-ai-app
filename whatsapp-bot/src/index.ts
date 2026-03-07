@@ -19,7 +19,7 @@ async function main() {
     return;
   }
 
-  const { initSessionManager, reconnectAll } = await import('./connection/sessionManager.js');
+  const { initSessionManager, reconnectAll, startSessionHealthMonitor } = await import('./connection/sessionManager.js');
   const { createMessageHandler } = await import('./handlers/messageHandler.js');
   const { startReminderScheduler } = await import('./scheduler/reminderCron.js');
   const { startDailySummaryScheduler } = await import('./scheduler/dailySummary.js');
@@ -54,6 +54,7 @@ async function main() {
   startReminderScheduler();
   startDailySummaryScheduler();
   startCalendarSyncScheduler();
+  startSessionHealthMonitor();
 }
 
 main().catch((err) => {

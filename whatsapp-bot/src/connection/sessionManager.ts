@@ -42,6 +42,7 @@ interface SessionEntry {
   botSentIds: Set<string>;
   msgRetryCache: NodeCache;
   messageStore: Map<string, proto.IMessage>;
+  lastActivityAt: number; // timestamp of last socket event (connection.update, messages.upsert, creds.update)
 }
 
 type MessageHandler = (sock: WASocket, msg: any) => Promise<void>;
@@ -139,6 +140,7 @@ export async function connectUser(userId: string): Promise<void> {
     botSentIds: new Set(),
     msgRetryCache,
     messageStore,
+    lastActivityAt: Date.now(),
   };
   sessions.set(userId, entry);
 
@@ -168,6 +170,9 @@ export async function connectUser(userId: string): Promise<void> {
   const handler = _createHandler(userId);
 
   sock.ev.process(async (events) => {
+    // Track activity for health monitoring (any event = socket is alive)
+    entry.lastActivityAt = Date.now();
+
     if (events['creds.update']) {
       await saveCreds();
     }
@@ -357,4 +362,50 @@ export function storeSentMessage(userId: string, id: string, message: proto.IMes
   if (!entry) return;
   entry.messageStore.set(id, message);
   setTimeout(() => entry.messageStore.delete(id), 1_800_000);
+}
+
+/**
+ * Periodic health check for all connected sessions.
+ * Detects two failure modes:
+ * 1. WebSocket readyState != OPEN (explicit dead socket)
+ * 2. No socket events for 15+ minutes (half-open / silently hung connection —
+ *    known issue on Railway where process stays active but socket is dead)
+ */
+const HEALTH_CHECK_INTERVAL = 5 * 60_000; // every 5 minutes
+const STALE_THRESHOLD = 15 * 60_000; // 15 min with zero socket events = stale
+
+function forceReconnect(userId: string, reason: string): void {
+  const entry = sessions.get(userId);
+  if (!entry) return;
+  console.warn(`[HEALTH] User ${userId}: ${reason} — forcing reconnect...`);
+  entry.status = 'disconnected';
+  try { entry.sock.end(undefined); } catch {}
+  connectUser(userId).catch(err =>
+    console.error(`[HEALTH] Reconnect failed for user ${userId}:`, err)
+  );
+}
+
+export function runHealthCheck(): void {
+  for (const [userId, entry] of sessions) {
+    if (entry.status !== 'connected') continue;
+
+    // Check 1: WebSocket readyState
+    const ws = (entry.sock as any)?.ws;
+    const readyState = ws?.readyState;
+    if (readyState !== undefined && readyState !== 1) {
+      forceReconnect(userId, `WebSocket dead (readyState=${readyState})`);
+      continue;
+    }
+
+    // Check 2: No activity for too long (half-open connection)
+    const idleMs = Date.now() - entry.lastActivityAt;
+    if (idleMs > STALE_THRESHOLD) {
+      forceReconnect(userId, `no socket activity for ${Math.round(idleMs / 60_000)}min`);
+    }
+  }
+}
+
+export function startSessionHealthMonitor(): void {
+  setInterval(runHealthCheck, HEALTH_CHECK_INTERVAL);
+  console.log('🩺 Session health monitor started (every 5 min)\n');
 }

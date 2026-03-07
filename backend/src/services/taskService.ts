@@ -62,13 +62,21 @@ export async function createTask(taskData: {
 
   if (error) throw error;
 
-  // Create reminder if reminder_time exists
-  if (taskData.reminder_time && data) {
-    await getSupabase().from('reminders').insert({
-      task_id: data.id,
-      user_id: taskData.user_id,
-      reminder_time: taskData.reminder_time,
-    });
+  // Determine reminder time: use explicit value, or default to 30 min before due_date
+  let reminderTime = taskData.reminder_time;
+  if (!reminderTime && taskData.due_date && data) {
+    const rt = new Date(new Date(taskData.due_date).getTime() - 30 * 60_000);
+    if (rt.getTime() > Date.now()) reminderTime = rt.toISOString();
+  }
+
+  if (reminderTime && data) {
+    if (new Date(reminderTime).getTime() > Date.now()) {
+      await getSupabase().from('reminders').insert({
+        task_id: data.id,
+        user_id: taskData.user_id,
+        reminder_time: reminderTime,
+      });
+    }
   }
 
   return data;

@@ -224,17 +224,23 @@ export async function createTask(userId: string, parsed: ParsedTask, categoryId?
 
   if (error) throw error;
 
-  // Only create a reminder if the time is in the future
-  if (parsed.reminder_time && task) {
-    const reminderDate = new Date(parsed.reminder_time);
+  // Determine reminder time: use explicit value, or default to 30 min before due_date
+  let reminderTime = parsed.reminder_time;
+  if (!reminderTime && dueDate && task) {
+    const rt = new Date(new Date(dueDate).getTime() - 30 * 60_000);
+    if (rt.getTime() > Date.now()) reminderTime = rt.toISOString();
+  }
+
+  if (reminderTime && task) {
+    const reminderDate = new Date(reminderTime);
     if (reminderDate.getTime() > Date.now()) {
       await getSupabase().from('reminders').insert({
         task_id: task.id,
         user_id: userId,
-        reminder_time: parsed.reminder_time,
+        reminder_time: reminderTime,
       });
     } else {
-      console.log(`[TASK] Skipping reminder — time is in the past: ${parsed.reminder_time}`);
+      console.log(`[TASK] Skipping reminder — time is in the past: ${reminderTime}`);
     }
   }
 
@@ -676,6 +682,11 @@ export async function getMeetings(userId: string, filter?: string) {
         .gte('due_date', dateRange.start.toISOString())
         .lte('due_date', dateRange.end.toISOString());
     }
+  } else {
+    // No filter = today + future only (exclude past meetings)
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    query = query.gte('due_date', todayStart.toISOString());
   }
 
   const { data, error } = await query;

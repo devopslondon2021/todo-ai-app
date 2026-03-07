@@ -502,8 +502,8 @@ async function upsertEventAsTask(
   // Build description with duration tag embedded
   const description = buildDescription(event, durationMinutes);
 
-  // Reminder 10 min before
-  const reminderTime = new Date(new Date(startTime).getTime() - 10 * 60 * 1000).toISOString();
+  // Reminder 30 min before
+  const reminderTime = new Date(new Date(startTime).getTime() - 30 * 60 * 1000).toISOString();
 
   // Check if task already exists
   const { data: existing } = await getSupabase()
