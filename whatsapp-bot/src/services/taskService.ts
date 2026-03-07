@@ -470,8 +470,12 @@ export async function getTasksForWhatsApp(userId: string, filter?: string, searc
       }
     }
   } else {
-    // Default list: show all non-completed tasks (including overdue)
-    query = query.neq('status', 'completed');
+    // Default list: show non-completed tasks from today onwards
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    query = query
+      .neq('status', 'completed')
+      .or(`due_date.gte.${todayStart.toISOString()},due_date.is.null`);
   }
 
   if (search) {
