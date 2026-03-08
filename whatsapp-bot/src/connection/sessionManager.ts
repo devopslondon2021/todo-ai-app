@@ -366,13 +366,11 @@ export function storeSentMessage(userId: string, id: string, message: proto.IMes
 
 /**
  * Periodic health check for all connected sessions.
- * Detects two failure modes:
- * 1. WebSocket readyState != OPEN (explicit dead socket)
- * 2. No socket events for 15+ minutes (half-open / silently hung connection —
- *    known issue on Railway where process stays active but socket is dead)
+ * Uses an ACTIVE keepalive ping (sendPresenceUpdate) to detect half-open
+ * TCP connections where readyState shows OPEN but data can't actually flow.
  */
 const HEALTH_CHECK_INTERVAL = 5 * 60_000; // every 5 minutes
-const STALE_THRESHOLD = 15 * 60_000; // 15 min with zero socket events = stale
+const KEEPALIVE_TIMEOUT = 10_000; // 10s — if presence update doesn't complete, socket is dead
 
 function forceReconnect(userId: string, reason: string): void {
   const entry = sessions.get(userId);
@@ -389,7 +387,7 @@ export function runHealthCheck(): void {
   for (const [userId, entry] of sessions) {
     if (entry.status !== 'connected') continue;
 
-    // Check 1: WebSocket readyState
+    // Check 1: WebSocket readyState (catches explicit dead sockets)
     const ws = (entry.sock as any)?.ws;
     const readyState = ws?.readyState;
     if (readyState !== undefined && readyState !== 1) {
@@ -397,15 +395,26 @@ export function runHealthCheck(): void {
       continue;
     }
 
-    // Check 2: No activity for too long (half-open connection)
-    const idleMs = Date.now() - entry.lastActivityAt;
-    if (idleMs > STALE_THRESHOLD) {
-      forceReconnect(userId, `no socket activity for ${Math.round(idleMs / 60_000)}min`);
-    }
+    // Check 2: Active keepalive ping — send a lightweight presence update
+    // through the WA socket. If it fails or times out, the connection is dead.
+    const sock = entry.sock;
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('keepalive timeout')), KEEPALIVE_TIMEOUT)
+    );
+    Promise.race([
+      sock.sendPresenceUpdate('available'),
+      timeout,
+    ]).catch((err: Error) => {
+      // Only reconnect if session is still the same (not already replaced)
+      const current = sessions.get(userId);
+      if (current && current.sock === sock && current.status === 'connected') {
+        forceReconnect(userId, `keepalive ping failed: ${err.message}`);
+      }
+    });
   }
 }
 
 export function startSessionHealthMonitor(): void {
   setInterval(runHealthCheck, HEALTH_CHECK_INTERVAL);
-  console.log('🩺 Session health monitor started (every 5 min)\n');
+  console.log('🩺 Session health monitor started (active keepalive every 5 min)\n');
 }

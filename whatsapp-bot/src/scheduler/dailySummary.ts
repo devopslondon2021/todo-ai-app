@@ -69,11 +69,6 @@ async function sendDailySummaries(): Promise<void> {
           !t.google_event_id
         );
 
-        if (tasks.length === 0 && todayMeetings.length === 0) {
-          console.log(`[DAILY] User ${user.id}: skipped — no tasks or meetings for today`);
-          continue;
-        }
-
         const userName = user.name || 'there';
         const message = formatMorningSummary(tasks, todayMeetings, userName);
         await sock.sendMessage(jid, { text: message });
@@ -88,13 +83,23 @@ async function sendDailySummaries(): Promise<void> {
 }
 
 export function startDailySummaryScheduler(): void {
-  // Pre-warm: run health check at 6:55 AM so stale sockets reconnect before 7 AM
+  // Pre-warm window: health checks at 6:30, 6:45, 6:55 to ensure socket is alive
+  cron.schedule('30 6 * * *', () => {
+    console.log('[DAILY] 6:30 AM pre-warm — health check + reconnect...');
+    runHealthCheck();
+  });
+
+  cron.schedule('45 6 * * *', () => {
+    console.log('[DAILY] 6:45 AM pre-warm — health check...');
+    runHealthCheck();
+  });
+
   cron.schedule('55 6 * * *', () => {
-    console.log('[DAILY] 6:55 AM pre-warm — checking socket health...');
+    console.log('[DAILY] 6:55 AM pre-warm — final health check before summary...');
     runHealthCheck();
   });
 
   cron.schedule('0 7 * * *', sendDailySummaries);
 
-  console.log('☀️ Daily summary scheduler started (6:55 pre-warm + 7:00 AM send)\n');
+  console.log('☀️ Daily summary scheduler started (6:30/6:45/6:55 pre-warm + 7:00 AM send)\n');
 }
