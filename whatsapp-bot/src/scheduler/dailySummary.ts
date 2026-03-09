@@ -71,7 +71,20 @@ async function sendDailySummaries(): Promise<void> {
 
         const userName = user.name || 'there';
         const message = formatMorningSummary(tasks, todayMeetings, userName);
-        await sock.sendMessage(jid, { text: message });
+        const sent = await sock.sendMessage(jid, { text: message });
+
+        // Mark chat as unread so the user sees a notification badge
+        if (sent?.key) {
+          try {
+            await sock.chatModify(
+              { markRead: false, lastMessages: [{ key: sent.key, messageTimestamp: sent.messageTimestamp }] },
+              jid,
+            );
+          } catch (err) {
+            console.warn(`[DAILY] User ${user.id}: could not mark chat unread:`, err);
+          }
+        }
+
         console.log(`[DAILY] User ${user.id}: summary sent (${tasks.length} tasks, ${todayMeetings.length} meetings)`);
       } catch (err) {
         console.error(`[DAILY] Error for user ${user.id}:`, err);

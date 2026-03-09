@@ -68,6 +68,17 @@ export function startReminderScheduler(): void {
             if (sent?.key?.id) {
               trackSentMessage(userId, sent.key.id);
             }
+
+            // Mark chat as unread so the user sees a notification badge
+            if (sent?.key) {
+              try {
+                await sock.chatModify(
+                  { markRead: false, lastMessages: [{ key: sent.key, messageTimestamp: sent.messageTimestamp }] },
+                  jid,
+                );
+              } catch { /* non-critical */ }
+            }
+
             await getSupabase()
               .from('reminders')
               .update({ is_sent: true, sent_at: now })
