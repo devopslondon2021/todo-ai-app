@@ -307,15 +307,18 @@ async function processTextInput(
 
     case 'list': {
       const fetchMeetings = !command.tasksOnly;
-      const [allTasks, meetings] = await Promise.all([
+      const [allTasks, queriedMeetings] = await Promise.all([
         taskService.getTasksForWhatsApp(user.id, command.filter),
         fetchMeetings ? taskService.getMeetings(user.id, command.filter) : Promise.resolve([]),
       ]);
-      // Separate tasks from meetings
-      const meetingIds = new Set(meetings.map((m: any) => m.id));
-      const tasks = allTasks.filter((t: any) =>
-        !meetingIds.has(t.id) && t.categories?.name !== 'Meetings' && !t.google_event_id
+      // Build complete meetings set + separate tasks
+      const meetingIds = new Set(queriedMeetings.map((m: any) => m.id));
+      const extraMeetings = allTasks.filter((t: any) =>
+        !meetingIds.has(t.id) && (t.categories?.name === 'Meetings' || t.google_event_id)
       );
+      const meetings = [...queriedMeetings, ...extraMeetings];
+      extraMeetings.forEach((m: any) => meetingIds.add(m.id));
+      const tasks = allTasks.filter((t: any) => !meetingIds.has(t.id));
       cacheTaskList(userId, tasks);
       if (command.tasksOnly) {
         await sendReply(sock, replyJid, formatTasksOnly(tasks, command.filter, meetings.length), userId);
@@ -441,16 +444,19 @@ async function processTextInput(
     }
 
     case 'summary': {
-      const [stats, allTodayTasks, upcomingReminders, todayMeetings] = await Promise.all([
+      const [stats, allTodayTasks, upcomingReminders, queriedMeetings2] = await Promise.all([
         taskService.getTaskStats(user.id),
         taskService.getTasksForWhatsApp(user.id, 'today'),
         taskService.getUpcomingReminders(user.id),
         taskService.getMeetings(user.id, 'today'),
       ]);
-      const meetingIds = new Set(todayMeetings.map((m: any) => m.id));
-      const todayTasks = allTodayTasks.filter((t: any) =>
-        !meetingIds.has(t.id) && t.categories?.name !== 'Meetings' && !t.google_event_id
+      const meetingIds = new Set(queriedMeetings2.map((m: any) => m.id));
+      const extraMtgs = allTodayTasks.filter((t: any) =>
+        !meetingIds.has(t.id) && (t.categories?.name === 'Meetings' || t.google_event_id)
       );
+      const todayMeetings = [...queriedMeetings2, ...extraMtgs];
+      extraMtgs.forEach((m: any) => meetingIds.add(m.id));
+      const todayTasks = allTodayTasks.filter((t: any) => !meetingIds.has(t.id));
       await sendReply(sock, replyJid, formatSummary(stats, todayTasks, upcomingReminders, todayMeetings), userId);
       break;
     }
@@ -513,29 +519,35 @@ async function processTextInput(
           break;
         }
         case 'list': {
-          const [allListTasks, listMeetings] = await Promise.all([
+          const [allListTasks, queriedListMtgs] = await Promise.all([
             taskService.getTasksForWhatsApp(user.id, classified.timeFilter),
             classified.timeFilter ? taskService.getMeetings(user.id, classified.timeFilter) : Promise.resolve([]),
           ]);
-          const listMeetingIds = new Set(listMeetings.map((m: any) => m.id));
-          const listTasks = allListTasks.filter((t: any) =>
-            !listMeetingIds.has(t.id) && t.categories?.name !== 'Meetings' && !t.google_event_id
+          const listMeetingIds = new Set(queriedListMtgs.map((m: any) => m.id));
+          const extraListMtgs = allListTasks.filter((t: any) =>
+            !listMeetingIds.has(t.id) && (t.categories?.name === 'Meetings' || t.google_event_id)
           );
+          const listMeetings = [...queriedListMtgs, ...extraListMtgs];
+          extraListMtgs.forEach((m: any) => listMeetingIds.add(m.id));
+          const listTasks = allListTasks.filter((t: any) => !listMeetingIds.has(t.id));
           cacheTaskList(userId, listTasks);
           await sendReply(sock, replyJid, formatDateList(listTasks, listMeetings, classified.timeFilter), userId);
           break;
         }
         case 'summary': {
-          const [stats2, allTodayTasks2, upcomingReminders2, todayMeetings2] = await Promise.all([
+          const [stats2, allTodayTasks2, upcomingReminders2, queriedMtgs3] = await Promise.all([
             taskService.getTaskStats(user.id),
             taskService.getTasksForWhatsApp(user.id, 'today'),
             taskService.getUpcomingReminders(user.id),
             taskService.getMeetings(user.id, 'today'),
           ]);
-          const meetingIds2 = new Set(todayMeetings2.map((m: any) => m.id));
-          const todayTasks2 = allTodayTasks2.filter((t: any) =>
-            !meetingIds2.has(t.id) && t.categories?.name !== 'Meetings' && !t.google_event_id
+          const meetingIds2 = new Set(queriedMtgs3.map((m: any) => m.id));
+          const extraMtgs2 = allTodayTasks2.filter((t: any) =>
+            !meetingIds2.has(t.id) && (t.categories?.name === 'Meetings' || t.google_event_id)
           );
+          const todayMeetings2 = [...queriedMtgs3, ...extraMtgs2];
+          extraMtgs2.forEach((m: any) => meetingIds2.add(m.id));
+          const todayTasks2 = allTodayTasks2.filter((t: any) => !meetingIds2.has(t.id));
           await sendReply(sock, replyJid, formatSummary(stats2, todayTasks2, upcomingReminders2, todayMeetings2), userId);
           break;
         }

@@ -4,7 +4,7 @@ import { getSocketForUser, getSessionStatus, runHealthCheck, connectUser } from 
 import { getTasksForWhatsApp, getMeetings } from '../services/taskService.js';
 import { formatMorningSummary } from '../utils/formatter.js';
 
-async function sendDailySummaries(): Promise<void> {
+export async function sendDailySummaries(): Promise<void> {
   console.log('[DAILY] Cron fired — preparing summaries...');
 
   // Run health check first to force-reconnect any stale sockets
@@ -56,18 +56,22 @@ async function sendDailySummaries(): Promise<void> {
       }
 
       try {
-        const [allTasks, todayMeetings] = await Promise.all([
+        const [allTasks, queriedMeetings] = await Promise.all([
           getTasksForWhatsApp(user.id, 'today'),
           getMeetings(user.id, 'today'),
         ]);
 
-        // Exclude meetings from tasks to avoid double-counting
-        const meetingIds = new Set(todayMeetings.map((m: any) => m.id));
-        const tasks = allTasks.filter((t: any) =>
+        // Build complete meetings set: queriedMeetings + any meeting-like tasks from allTasks
+        const meetingIds = new Set(queriedMeetings.map((m: any) => m.id));
+        const extraMeetings = allTasks.filter((t: any) =>
           !meetingIds.has(t.id) &&
-          t.categories?.name !== 'Meetings' &&
-          !t.google_event_id
+          (t.categories?.name === 'Meetings' || t.google_event_id)
         );
+        const todayMeetings = [...queriedMeetings, ...extraMeetings];
+        extraMeetings.forEach((m: any) => meetingIds.add(m.id));
+
+        // Tasks = everything that's not a meeting
+        const tasks = allTasks.filter((t: any) => !meetingIds.has(t.id));
 
         const userName = user.name || 'there';
         const message = formatMorningSummary(tasks, todayMeetings, userName);

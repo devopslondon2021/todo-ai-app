@@ -1,5 +1,6 @@
 import express from 'express';
 import { connectUser, disconnectUser, getSessionStatus } from '../connection/sessionManager.js';
+import { sendDailySummaries } from '../scheduler/dailySummary.js';
 
 export function startBotApiServer(port: number): void {
   const app = express();
@@ -7,6 +8,17 @@ export function startBotApiServer(port: number): void {
 
   // Health check for deployment platforms
   app.get('/health', (_req, res) => { res.json({ ok: true }); });
+
+  // Trigger daily summary on demand (for testing)
+  app.post('/test-summary', async (_req, res) => {
+    try {
+      await sendDailySummaries();
+      res.json({ ok: true, message: 'Summary sent' });
+    } catch (err: any) {
+      console.error('[BOT-API] /test-summary error:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   app.post('/connect', async (req, res) => {
     const { userId } = req.body;

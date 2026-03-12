@@ -665,7 +665,7 @@ export async function getMeetings(userId: string, filter?: string) {
     .select('id')
     .eq('user_id', userId)
     .is('parent_id', null)
-    .eq('name', 'Meetings')
+    .ilike('name', 'Meetings')
     .single();
 
   if (!cat) return [];
